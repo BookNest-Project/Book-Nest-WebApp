@@ -10,75 +10,60 @@ export const register = async (req, res) => {
   try {
     const { email, password, display_name, role = 'reader' } = req.body;
 
-    console.log('📝 Registration attempt for:', email);
+    // Validate required fields
+    if (!display_name) {
+      return res.status(400).json({ error: 'display_name is required' });
+    }
 
-    // Step 1: Create user in Supabase Auth
+    // Create user in Supabase Auth
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true  // Auto-confirm for now (remove in production!)
+      email_confirm: true,
+      user_metadata: { 
+        display_name,
+        role 
+      }
     });
 
     if (authError) {
-      console.error('❌ Auth creation error:', authError.message);
-      
       if (authError.message.includes('already registered')) {
         return res.status(400).json({ error: 'Email already registered' });
       }
-      
       return res.status(400).json({ error: authError.message });
     }
 
-    console.log('✅ Auth user created:', authData.user.id);
-
-    // Step 2: Create user in our database
-    const { data: dbData, error: dbError } = await supabaseAdmin
+    // The trigger already created/updated the public.users row!
+    // Just fetch it to return nice response
+    const { data: dbUser, error: dbError } = await supabaseAdmin
       .from('users')
-      .insert({
-        id: authData.user.id,  // Same ID as Auth user
-        email: email,
-        display_name: display_name,
-        role: role,
-        created_at: new Date().toISOString()
-      })
       .select('id, email, role, display_name')
+      .eq('id', authData.user.id)
       .single();
 
     if (dbError) {
-      console.error('❌ Database insert error:', dbError.message);
-      
-      // Rollback: Delete the auth user if DB insert fails
+      // This should rarely happen now
+      console.error('Failed to fetch created user:', dbError);
+      // Optional: clean up auth user
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      
-      return res.status(500).json({ error: 'Failed to create user profile' });
+      return res.status(500).json({ error: 'Failed to finalize user creation' });
     }
 
-    console.log('✅ Database user created:', dbData.id);
-
-    // Step 3: Generate JWT token for immediate login
-    const { data: tokenData, error: tokenError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'magiclink',
-      email: email,
-    });
-
-    if (tokenError) {
-      console.error('❌ Token generation error:', tokenError);
-      // User is created but no token - they can login manually
-    }
+    // Generate session (optional but nice for immediate login)
+    const { data: sessionData } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'signup',
+      email,
+      password
+    }); // Or use createSession if available
 
     res.status(201).json({
       message: 'User registered successfully',
-      user: {
-        id: dbData.id,
-        email: dbData.email,
-        role: dbData.role,
-        display_name: dbData.display_name
-      },
-      token: tokenData?.properties?.action_link || null
+      user: dbUser,
+      // token if you generated one
     });
 
   } catch (error) {
-    console.error('🔥 Unexpected error in register:', error);
+    console.error('Register error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };

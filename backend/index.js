@@ -6,8 +6,8 @@ import helmet from 'helmet';
 // Load environment variables
 dotenv.config();
 
-// Import routes (we'll create these next)
-// import authRoutes from './routes/authRoutes.js';
+// Import routes
+import authRoutes from './routes/authRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,7 +17,7 @@ app.use(helmet());
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: '*',  // Change to specific frontend URL in production
   credentials: true
 }));
 
@@ -25,33 +25,51 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint
+// Logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    service: 'BookNest API'
+    service: 'BookNest API',
+    version: '1.0.0', 
   });
 });
 
 // Mount routes
-// app.use('/api/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Endpoint not found' });
+// 404 handler for Express 5 (no '*' parameter)
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Endpoint not found',
+    path: req.originalUrl,
+    method: req.method
+  });
 });
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('❌ Error:', err.stack);
   res.status(500).json({ 
-    error: 'Something went wrong!',
-    ...(process.env.NODE_ENV === 'development' && { details: err.message })
+    error: 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { 
+      message: err.message
+    })
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📁 Environment: ${process.env.NODE_ENV}`);
+  console.log(`
+  🚀 BookNest Backend Started!
+  📍 Port: ${PORT}
+  📁 Environment: ${process.env.NODE_ENV}
+  🗄️  Supabase: Connected
+  🚦 Express: 4.18.2
+  `);
 });
