@@ -134,23 +134,135 @@ export const login = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userRole = req.user.role;  // From middleware
 
-    console.log('👤 Profile request for:', userId);
+    console.log(`👤 Profile request for user: ${userId} (${userRole})`);
 
-    const { data, error } = await supabaseAdmin
+    // Step 1: Fetch basic user info (same as before)
+    const { data: basicUser, error: userError } = await supabaseAdmin
       .from('users')
       .select('id, email, role, display_name, bio, avatar_url, created_at')
       .eq('id', userId)
       .single();
 
-    if (error) {
-      console.error('❌ Profile fetch error:', error);
+    if (userError) {
+      console.error('❌ Basic user fetch error:', userError);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({
-      user: data
-    });
+    // Step 2: Prepare response object
+    const profile = {
+      user: basicUser,
+      additionalData: {}  // We'll add role-specific stuff here
+    };
+
+    // Step 3: Role-specific fetches
+    if (userRole === 'reader') {
+      // Fetch owned book formats (what they purchased)
+      const { data: ownedFormats, error: formatsError } = await supabaseAdmin
+        .from('user_book_formats')
+        .select(`
+          id,
+          purchased_at,
+          book_format:book_format_id (
+            id,
+            format_type,
+            price,
+            book:book_id (
+              id,
+              title,
+              description,
+              author_name,
+              cover_image_url
+            )
+          )
+        `)
+        .eq('user_id', userId)
+        .order('purchased_at', { ascending: false });
+
+      if (formatsError) {
+        console.error('❌ Owned formats error:', formatsError);
+        return res.status(500).json({ error: 'Failed to fetch owned books' });
+      }
+
+      // Fetch progress for each owned format
+      const { data: progressData, error: progressError } = await supabaseAdmin
+        .from('user_progress')
+        .select('book_format_id, last_position, progress_percentage, updated_at')
+        .eq('user_id', userId);
+
+      if (progressError) {
+        console.error('❌ Progress error:', progressError);
+        return res.status(500).json({ error: 'Failed to fetch reading progress' });
+      }
+
+      // Fetch yearly reading stats
+      const { data: yearlyData, error: yearlyError } = await supabaseAdmin
+        .from('user_yearly_reading')
+        .select('year, yearly_goal_books, books_completed, updated_at')
+        .eq('user_id', userId)
+        .order('year', { ascending: false });
+
+      if (yearlyError) {
+        console.error('❌ Yearly reading error:', yearlyError);
+        return res.status(500).json({ error: 'Failed to fetch yearly reading data' });
+      }
+
+      // Add to response
+      profile.additionalData = {
+        ownedBooks: ownedFormats,  // Includes book details
+        progress: progressData,    // Array of progress per book_format
+        yearlyReading: yearlyData  // Goals and completed per year
+      };
+    } else if (userRole === 'author' || userRole === 'publisher') {
+      // Fetch books they uploaded or are associated with
+      let query = supabaseAdmin
+        .from('books')
+        .select(`
+          id,
+          title,
+          description,
+          created_at,
+          cover_image_url,
+          author_name,
+          publisher_name,
+          formats:book_formats (
+            id,
+            format_type,
+            price,
+            page_count,
+            duration_sec
+          )
+        `);
+
+      // For authors: books where author_id = userId
+      // For publishers: books where publisher_id = userId
+      // Also include if uploaded_by = userId
+      if (userRole === 'author') {
+        query = query.eq('author_id', userId);
+      } else if (userRole === 'publisher') {
+        query = query.eq('publisher_id', userId);
+      }
+      // OR uploaded_by (for both)
+      query = query.or(`uploaded_by.eq.${userId}`);
+
+      query = query.order('created_at', { ascending: false });
+
+      const { data: booksData, error: booksError } = await query;
+
+      if (booksError) {
+        console.error('❌ Books fetch error:', booksError);
+        return res.status(500).json({ error: 'Failed to fetch uploaded books' });
+      }
+
+      // Add to response
+      profile.additionalData = {
+        uploadedBooks: booksData  // Includes formats
+      };
+    }
+
+    // Step 4: Send response
+    res.json(profile);
 
   } catch (error) {
     console.error('🔥 Unexpected error in getProfile:', error);

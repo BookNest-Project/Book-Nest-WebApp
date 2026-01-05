@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
+import bookRoutes from './routes/bookRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -43,6 +44,8 @@ app.get('/health', (req, res) => {
 
 // Mount routes
 app.use('/api/auth', authRoutes);
+// Book management routes
+app.use('/api/books', bookRoutes);
 
 // 404 handler for Express 5 (no '*' parameter)
 app.use((req, res) => {
@@ -64,6 +67,7 @@ app.use((err, req, res, next) => {
   });
 });
 
+
 app.listen(PORT, () => {
   console.log(`
   🚀 BookNest Backend Started!
@@ -73,3 +77,5 @@ app.listen(PORT, () => {
   🚦 Express: 4.18.2
   `);
 });
+// Book routes (protected)
+app.use('/api/books', bookRoutes); 
