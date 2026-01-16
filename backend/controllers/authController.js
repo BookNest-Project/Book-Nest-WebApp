@@ -49,19 +49,32 @@ export const register = async (req, res) => {
       return res.status(500).json({ error: 'Failed to finalize user creation' });
     }
 
-    // Generate session (optional but nice for immediate login)
-    const { data: sessionData } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'signup',
+
+    // 🔥🔥🔥 THIS IS THE FIX - Generate login token for immediate access
+    console.log('🔑 Generating login token...');
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password
-    }); // Or use createSession if available
-
-    res.status(201).json({
-      message: 'User registered successfully',
-      user: dbUser,
-      // token if you generated one
     });
 
+    if (signInError) {
+      console.warn('⚠️ Could not generate immediate login token:', signInError.message);
+      // User created but needs to login manually
+      res.status(201).json({
+        message: 'User registered successfully. Please login with your credentials.',
+        user: dbUser
+      });
+    } else {
+      // Success! User registered AND logged in immediately
+      console.log('✅ Token generated successfully');
+      res.status(201).json({
+        message: 'User registered and logged in successfully',
+        user: dbUser,
+        token: signInData.session.access_token,
+        refresh_token: signInData.session.refresh_token
+      });
+    }
+ 
   } catch (error) {
     console.error('Register error:', error);
     res.status(500).json({ error: 'Internal server error' });
