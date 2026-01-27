@@ -1,13 +1,15 @@
 
 "use client";
 import React, { useState } from 'react';
-import Image from 'next/image';
-import {  MessageCircle,  Heart, Share2,Search, Menu as MenuIcon } from "lucide-react";
+import {  MessageCircle, Share2,Search, Heart, EllipsisVertical } from "lucide-react";
 import { BOOKS } from '../mockup/book';
 import { POSTS } from '../mockup/posts';
+import ProtectedReaderRoute from "@/components/ProtectedReaderRoute";
+import BookCard from "@/components/BookCard";
 export default function ReaderHome() {
     const [activeTab, setActiveTab] = useState('Discover Books');
     return(
+        <ProtectedReaderRoute>
         <div>
             <header className="bg-white p-4 border-b sticky top-0 z-10">
           <div className="max-w-5xl mx-auto relative">
@@ -61,34 +63,8 @@ export default function ReaderHome() {
                   </div>
         
         </div>
+        </ProtectedReaderRoute>
     );
-}
-//---the individual book card component ---
-function BookCard({ book }: { book: any }) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition-shadow">
-      <div className="relative h-44 w-full bg-gray-100">
-        <Image src={book.image} alt={book.title} fill className="object-cover " />
-        <button className="absolute top-2 right-2 p-1.5 bg-white rounded-full shadow-sm">
-          <Heart size={16} className="text-gray-400" />
-        </button>
-      </div>
-      <div className="p-5 ">
-        <div className="flex justify-between items-center mb-1">
-          <span className="text-[10px] font-bold text-green-500 bg-green-50 px-2 py-0.5 rounded uppercase">{book.category}</span>
-          <span className="text-xs font-bold text-orange-400">{book.rating}</span>
-        </div>
-        <h3 className="font-bold text-sm truncate text-gray-800">{book.title}</h3>
-        <p className="text-xs text-gray-400 mb-4">{book.author}</p>
-        <div className="flex justify-between items-center">
-          <span className="font-bold text-sm text-gray-800">${book.price}</span>
-
-          <a href={`/bookdetail/${book.id}`} className="bg-blue-600 text-white text-[10px] px-3 py-1.5 rounded-md hover:bg-blue-700" >View Detail</a>
-         
-        </div>
-      </div>
-    </div>
-  );
 }
 //---the community feed post card component ---
 function PostCard({ post }: { post: any }) {
@@ -107,7 +83,7 @@ function PostCard({ post }: { post: any }) {
           </div>
         </div>
         <button className="text-gray-400 hover:text-gray-600">
-          <MenuIcon size={18} />
+          <EllipsisVertical size={18} />
         </button>
       </div>
 

@@ -8,10 +8,10 @@ const Footer = () => {
             <h3 className="text-2xl font-bold">BookNest</h3>
             <p className="text-sm text-gray-800">your digital  reading journey discover ,learn and grow with  our curated collection of book and audio books</p>
             <div className="flex space-x-3 text-gray-800">
-                <Twitter/>
-                <Facebook/>
-                <Linkedin/>
-                <Instagram/>
+                <Twitter className="hover:text-blue-600"/>
+                <Facebook className="hover:text-blue-600"/>
+                <Linkedin className="hover:text-blue-600"/>
+                <Instagram className="hover:text-blue-600"/>
             </div>
         </div>
 

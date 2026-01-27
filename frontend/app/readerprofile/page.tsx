@@ -2,6 +2,7 @@
 import  { useEffect, useState } from 'react';
 import Image from 'next/image';
 import {  Bell, CreditCard, LifeBuoy, ChevronDown, Edit3, Loader2, User as UserIcon } from 'lucide-react';
+import ProtectedReaderRoute from "@/components/ProtectedReaderRoute";
 
 export default function ProfileView() {
   const [profile, setProfile] = useState<any>(null);
@@ -31,9 +32,11 @@ export default function ProfileView() {
   }, []);
 
   if (loading) return (
-    <div className="flex h-96 items-center justify-center">
-      <Loader2 className="animate-spin text-blue-600" size={40} />
-    </div>
+    <ProtectedReaderRoute>
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="animate-spin text-blue-600" size={40} />
+      </div>
+    </ProtectedReaderRoute>
   );
 
   // Extracting data from your backend structure
@@ -41,7 +44,8 @@ export default function ProfileView() {
   const stats = profile?.additionalData?.yearlyReading?.[0] || { books_completed: 0 };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 animate-in fade-in duration-500">
+    <ProtectedReaderRoute>
+      <div className="max-w-4xl mx-auto p-6 animate-in fade-in duration-500">
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-gray-600 dark:text-white">Profile</h1>
         <p className="text-gray-500">Manage your account and reading preferences</p>
@@ -119,7 +123,8 @@ export default function ProfileView() {
           <SettingsItem icon={<LifeBuoy size={18} />} label="Help & Support" />
         </div>
       </div>
-    </div>
+      </div>
+    </ProtectedReaderRoute>
   );
 }
 

@@ -1,8 +1,10 @@
 "use client";
 import React, { useState, useMemo } from 'react';
-import Image from 'next/image';
 import { Search, Heart } from 'lucide-react';
 import { BOOKS } from '../mockup/book';
+import ProtectedReaderRoute from "@/components/ProtectedReaderRoute";
+import BookCard from "@/components/BookCard";
+import { Input } from '@/components/ui/input';
 
 export default function WishlistView() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -16,6 +18,7 @@ export default function WishlistView() {
   }, [searchQuery]);
 
   return (
+    <ProtectedReaderRoute>
     <div className="p-8 max-w-6xl mx-auto min-h-screen">
       
       {/* Header & Search */}
@@ -27,8 +30,7 @@ export default function WishlistView() {
         
         <div className="relative w-full md:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-          <input 
-            type="text" 
+          <Input 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search Wishlist..." 
@@ -41,7 +43,7 @@ export default function WishlistView() {
       {wishlistItems.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
           {wishlistItems.map((book) => (
-            <WishlistCard key={book.id} book={book} />
+            <BookCard key={book.id} book={book} variant="wishlist" />
           ))}
         </div>
       ) : (
@@ -51,38 +53,6 @@ export default function WishlistView() {
         </div>
       )}
     </div>
-  );
-}
-
-// --- Card Component ---
-function WishlistCard({ book }: { book: any }) {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-gray-100 dark:border-slate-700">
-      <div className="relative h-48 w-full">
-        <Image src={book.image} alt={book.title} fill className="object-cover" />
-        <button className="absolute top-3 right-3 p-1.5 bg-white/90 dark:bg-slate-900/90 rounded-full">
-          <Heart size={18} className="text-red-500 fill-red-500" />
-        </button>
-      </div>
-
-      <div className="p-5">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-[10px] font-bold text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded uppercase">
-            {book.category}
-          </span>
-          <span className="text-xs font-bold text-orange-400">{book.rating}</span>
-        </div>
-
-        <h3 className="font-bold text-sm text-gray-600  dark:text-white mb-1 truncate">{book.title}</h3>
-        <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">{book.author}</p>
-
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-sm text-gray-900 dark:text-white">${book.price.toFixed(2)}</span>
-          <button className="bg-blue-600 text-white text-[10px] px-4 py-2 rounded-md font-semibold">
-            View Detail
-          </button>
-        </div>
-      </div>
-    </div>
+    </ProtectedReaderRoute>
   );
 }

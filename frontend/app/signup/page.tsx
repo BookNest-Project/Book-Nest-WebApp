@@ -1,31 +1,133 @@
-import Image from "next/image";
-export default function Signup(){
-    return(
-        <div className="flex flex-col font-sans min-h-screen bg-gray-100 items-center justify-center  text-gray-800 ">
-            <button className=" rounded-3xl p-2 mb-4 absolute top-16 bg-gray-100 left-4 flex items-center gap-2 ">
-                <Image src="/back.png" alt="Back" width={20} height={20}/>
-               </button>
-            <div className="border border-gray-200 bg-gray-50 shadow-2xl p-12 rounded-lg w-[100%] max-w-md ">
-            <h2 className="font-bold ">Create Account </h2>
-            <p className="mt-3">join our community of readers and authors</p>
-            <p>i'm a </p>
-            <div className="flex items-center justify-center gap-12 mt-2">
-            <button className="border rounded-lg border-gray-200 p-5 ">
-              <Image src="/reader.png" alt="Reader" width={30} height={30} />
-                Reader</button>
-            <button className="border rounded-lg border-gray-200 p-5 "><Image src="/authors.png" alt="Author" width={30} height={30} /> Author</button>
-        </div>
-        <div className="flex flex-col gap-2 mt-4">
-        <label htmlFor="">Full Name</label>
-        <input type="text" placeholder="Enter your full name"className="border border-gray-200 p-1 px-3 rounded-xl"/>
-        <label htmlFor="">Email Address</label>
-        <input type="email" placeholder="Enter your email address" className="border border-gray-200 p-1 px-3 rounded-xl"/>
-        <label htmlFor="">Password</label>
-        <input type="password" placeholder="Create a password" className="border border-gray-200 p-1 px-3 rounded-xl"/>
-        <button className="rounded-lg bg-blue-500 text-white p-1 w-32 mx-auto">Create Account</button>
-        <p className="mx-auto mt-1">Already have an account? <a href="/login" className="hover:text-blue-500">Login</a></p>
-        </div>
-        </div>
-        </div>
-    )
+"use client"
+
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { BookIcon, PenTool } from "lucide-react"
+import Link from "next/link"
+import { useState } from "react"
+import { useRouter } from "next/navigation"
+
+const Signup = () => {
+  const router = useRouter()
+
+  const [fullName, setFullName] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [role, setRole] = useState<"reader" | "author">("reader")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+
+    try {
+      const res = await fetch("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          display_name: fullName,
+          email,
+          password,
+          role,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.message || "Something went wrong")
+      }
+
+      // optional: save token if backend returns one
+      // localStorage.setItem("token", data.token)
+
+      router.push("/login")
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col p-5 rounded-xl shadow-2xl md:w-1/3 my-10 mx-auto">
+      <h3 className="font-bold text-lg">Create Account</h3>
+      <h5>Join our community of readers and authors</h5>
+
+      <p className="mt-4">I&apos;m a:</p>
+      <div className="flex justify-around gap-4">
+        <Button
+          onClick={() => setRole("reader")}
+          variant='ghost'
+          className={`border p-5 rounded-xl flex flex-col items-center w-1/3 h-20 ${
+            role === "reader" ? "border-blue-600" : ""
+          }`}
+        >
+          <BookIcon />
+          <p>Reader</p>
+        </Button>
+
+        <Button
+          onClick={() => setRole("author")}
+          variant='ghost'
+          className={`border p-5 rounded-xl flex flex-col items-center w-1/3 h-20 ${
+            role === "author" ? "border-blue-600" : ""
+          }`}
+        >
+          <PenTool />
+          <p>Author</p>
+        </Button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="flex flex-col space-y-3 my-5">
+        <p>Full Name</p>
+        <Input
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          placeholder="Enter your name"
+          required
+        />
+
+        <p>Email</p>
+        <Input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Enter your email"
+          required
+        />
+
+        <p>Password</p>
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Enter your password"
+          required
+        />
+
+        {error && <p className="text-red-600 text-sm">{error}</p>}
+
+        <Button
+          disabled={loading}
+          className="bg-blue-600 hover:bg-blue-700 text-white w-fit self-center"
+        >
+          {loading ? "Creating..." : "Create Account"}
+        </Button>
+      </form>
+
+      <p className="self-center">
+        Already have an account?{" "}
+        <Link href="/login" className="text-blue-600 hover:underline">
+          Login
+        </Link>
+      </p>
+    </div>
+  )
 }
+
+export default Signup
