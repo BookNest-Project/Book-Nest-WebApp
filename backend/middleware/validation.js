@@ -133,3 +133,29 @@ export const bookFormatSchema = Joi.object({
     otherwise: Joi.optional()
   })
 });
+
+// Schema for partial book updates (allow any subset of fields)
+export const bookUpdateSchema = Joi.object({
+  title: Joi.string().min(1).max(200).messages({ 'string.max': 'Title cannot exceed 200 characters' }).optional(),
+  description: Joi.string().max(1000).optional(),
+  author_name: Joi.string().min(2).max(100).optional(),
+  publisher_name: Joi.string().max(100).optional(),
+  category_id: Joi.string().guid({ version: 'uuidv4' }).optional(),
+  language: Joi.string().valid('amharic', 'english', 'both').optional(),
+  cover_image_url: Joi.string().uri().optional(),
+  genre: Joi.string().max(50).optional(),
+  page_count: Joi.number().integer().min(1).max(5000).optional()
+  // Optional formats array to allow upsert/delete of book formats in update endpoint
+  ,
+  formats: Joi.array().items(
+    Joi.object({
+      id: Joi.string().guid({ version: 'uuidv4' }).optional(),
+      action: Joi.string().valid('upsert', 'delete').optional(),
+      format_type: Joi.string().valid('PDF', 'Audio').optional(),
+      file_url: Joi.string().uri().optional(),
+      price: Joi.number().min(50).optional(),
+      page_count: Joi.number().integer().min(1).optional(),
+      duration_sec: Joi.number().integer().min(1).optional()
+    }).messages({ 'string.guid': 'Format id must be a valid UUID' })
+  ).optional()
+}).min(1).messages({ 'object.min': 'At least one field must be provided for update' });
