@@ -2,123 +2,58 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
+import morgan from 'morgan';
+
+// Import routes
+import authRoutes from './routes/authRoutes.js';
 import bookRoutes from './routes/bookRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js'; // Add this
 
 // Load environment variables
 dotenv.config();
 
-// Import routes
-import authRoutes from './routes/authRoutes.js';
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // Security middleware
 app.use(helmet());
 
 // CORS configuration
 app.use(cors({
-  origin: '*',  // Change to specific frontend URL in production
-  credentials: true
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Logging middleware
+app.use(morgan('dev'));
 
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
-
 // Health check
-app.get('/health', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
     service: 'BookNest API',
-    version: '1.0.0', 
+    version: '1.0.0',
+    endpoints: {
+      auth: '/api/auth',
+      books: '/api/books',
+      payments: '/api/payments'
+    }
   });
 });
 
 // Mount routes
 app.use('/api/auth', authRoutes);
-// Book management routes
 app.use('/api/books', bookRoutes);
+app.use('/api/payments', paymentRoutes); // Add this
 
-app.get('/api/categories', async (req, res) => {
-  try {
-    const { data: categories, error } = await supabaseAdmin
-      .from('categories')
-      .select('id, name, description')
-      .order('name');
-    
-    if (error) throw error;
-    
-    res.json({ categories: categories || [] });
-  } catch (error) {
-    console.error('Categories error:', error);
-    res.status(500).json({ error: 'Failed to fetch categories' });
-  }
-});
-// Debug endpoint to check setup
-app.get('/api/debug/setup', async (req, res) => {
-  try {
-    const checks = [];
-    
-    // 1. Check database connection
-    const { data: categories, error: catError } = await supabaseAdmin
-      .from('categories')
-      .select('count(*)', { count: 'exact', head: true });
-    
-    checks.push({
-      name: 'Database Connection',
-      status: !catError ? '✅ OK' : '❌ Failed',
-      details: catError ? catError.message : `${categories} categories found`
-    });
-    
-    // 2. Check storage bucket
-    const { data: buckets, error: bucketError } = await supabaseAdmin
-      .storage
-      .listBuckets();
-    
-    const hasBooknestBucket = buckets?.some(b => b.name === 'booknest');
-    
-    checks.push({
-      name: 'Storage Bucket',
-      status: hasBooknestBucket ? '✅ OK' : '❌ Missing',
-      details: hasBooknestBucket ? 'booknest bucket exists' : 'Create bucket: booknest'
-    });
-    
-    // 3. Check if storage is public
-    checks.push({
-      name: 'Storage Public Access',
-      status: '⚠️ Check manually',
-      details: 'Go to Supabase → Storage → booknest → Policies → Should have public policy'
-    });
-    
-    res.json({
-      status: 'Debug Info',
-      checks: checks,
-      instructions: [
-        '1. Ensure booknest bucket exists and is public',
-        '2. Create at least one category in categories table',
-        '3. Register author/publisher users for testing'
-      ]
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-
-
-
-
-
-// 404 handler for Express 5 (no '*' parameter)
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
     error: 'Endpoint not found',
@@ -130,22 +65,43 @@ app.use((req, res) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err.stack);
-  res.status(500).json({ 
-    error: 'Internal server error',
+  
+  let statusCode = 500;
+  let message = 'Internal server error';
+  
+  if (err.name === 'ValidationError') {
+    statusCode = 400;
+    message = err.message;
+  } else if (err.name === 'JsonWebTokenError') {
+    statusCode = 401;
+    message = 'Invalid token';
+  } else if (err.name === 'TokenExpiredError') {
+    statusCode = 401;
+    message = 'Token expired';
+  }
+  
+  res.status(statusCode).json({ 
+    success: false,
+    error: message,
     ...(process.env.NODE_ENV === 'development' && { 
       message: err.message
     })
   });
 });
 
-
+// Start server
 app.listen(PORT, () => {
   console.log(`
   🚀 BookNest Backend Started!
   📍 Port: ${PORT}
-  📁 Environment: ${process.env.NODE_ENV}
+  📁 Environment: ${process.env.NODE_ENV || 'development'}
+  🌐 Frontend: ${process.env.FRONTEND_URL || 'http://localhost:3000'}
   🗄️  Supabase: Connected
-  🚦 Express: 4.18.2
+  💳 Chapa: Test Mode
+  📚 Available endpoints:
+      http://localhost:${PORT}/api/health
+      http://localhost:${PORT}/api/auth
+      http://localhost:${PORT}/api/books
+      http://localhost:${PORT}/api/payments
   `);
 });
- 

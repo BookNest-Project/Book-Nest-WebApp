@@ -7,32 +7,7 @@ export const registerSchema = Joi.object({
   display_name: Joi.string().min(2).max(50).required(),
   role: Joi.string().valid('reader', 'author', 'publisher').default('reader')
 });
-
-// // Schema for book creation
-// export const bookSchema = Joi.object({
-//   title: Joi.string().min(1).max(200).required(),
-//   description: Joi.string().max(1000),
-//   category_id: Joi.string().guid().required(),
-//   language: Joi.string().valid('amharic', 'english', 'both'),
-//   cover_image_url: Joi.string().uri()
-// });
-
-// // Schema for book format
-// export const bookFormatSchema = Joi.object({
-//   format_type: Joi.string().valid('PDF', 'Audio').required(),
-//   file_url: Joi.string().uri().required(),
-//   price: Joi.number().min(50).required(),  // Minimum 50 ETB
-//   page_count: Joi.number().when('format_type', {
-//     is: 'PDF',
-//     then: Joi.number().min(1).required(),
-//     otherwise: Joi.forbidden()
-//   }),
-//   duration_sec: Joi.number().when('format_type', {
-//     is: 'Audio',
-//     then: Joi.number().min(1).required(),
-//     otherwise: Joi.forbidden()
-//   })
-// });
+ 
 
 /**
  * Generic validation middleware
@@ -159,3 +134,46 @@ export const bookUpdateSchema = Joi.object({
     }).messages({ 'string.guid': 'Format id must be a valid UUID' })
   ).optional()
 }).min(1).messages({ 'object.min': 'At least one field must be provided for update' });
+
+
+
+//Payment
+export const validatePaymentRequest = (req, res, next) => {
+  const { book_format_id, format_type } = req.body;
+  
+  const errors = [];
+  
+  if (!book_format_id) {
+    errors.push('book_format_id is required');
+  }
+  
+  if (!format_type || !['PDF', 'Audio'].includes(format_type)) {
+    errors.push('format_type must be either "PDF" or "Audio"');
+  }
+  
+  if (errors.length > 0) {
+    return res.status(400).json({ 
+      success: false, 
+      errors 
+    });
+  }
+  
+  next();
+};
+
+export const validateWebhookSignature = (req, res, next) => {
+  const chapaSignature = req.headers['chapa-signature'];
+  
+  if (!chapaSignature) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'No signature provided' 
+    });
+  }
+  
+  // In production, you'd verify the signature
+  // For now, we'll accept it in test mode
+  // TODO: Implement proper signature verification
+  
+  next();
+};

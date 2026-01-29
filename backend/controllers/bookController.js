@@ -1,6 +1,5 @@
-import { supabaseAdmin } from '../config/supabase.js'; 
-import { v4 as uuidv4 } from 'uuid';
-import { bookFormatSchema } from '../middleware/validation.js';
+import { supabase, supabaseAdmin } from '../config/supabase.js'; 
+import { v4 as uuidv4 } from 'uuid'; 
 /**
  * CREATE BOOK - Only authors and publishers can create
  */
@@ -400,7 +399,7 @@ console.log('✅ Book title is unique');
   }
 };
 
-// Helper: Upload file to Supabase Storage
+// Helper: Upload file to Supabase Storage\
 async function uploadToSupabase(file, folderPath, fileName) {
   try {
     const fileExt = file.originalname.split('.').pop();
@@ -748,6 +747,18 @@ export const updateBook = async (req, res) => {
             created_at: new Date().toISOString()
           };
 
+const { data: existingFormat } = await supabase
+  .from('book_formats')
+  .select('id')
+  .eq('book_id', id)
+  .eq('format_type', fmtType)
+  .maybeSingle();
+
+if (existingFormat) {
+  return res.status(400).json({
+    error: `This book already has a ${fmtType} format`
+  });
+}
           if (f.id) {
             // Update existing format
             const { data: updatedFormat, error: updErr } = await supabaseAdmin
@@ -930,6 +941,18 @@ export const addBookFormat = async (req, res) => {
   try {
     const userId = req.user.id;
     const { bookId } = req.params;
+
+      const { data: existing } = await supabase
+    .from('book_formats')
+    .select('id')
+    .eq('book_id', book_id)
+    .eq('format_type', format_type)
+    .maybeSingle();
+
+  if (existing) {
+    return res.status(400).json({
+      error: `This book already has a ${format_type} format`
+    });}
     
     console.log(`➕ Adding format to book: ${bookId}`);
     
@@ -1144,5 +1167,511 @@ export const addBookFormat = async (req, res) => {
   } catch (error) {
     console.error('🔥 Error in addBookFormat:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+};
+ 
+// Comprehensive book search with filters and sorting
+export const searchBooks = async (req, res, next) => {
+  try {
+    const {
+      query,           // Search keyword
+      categoryId,      // Filter by category
+      language,        // Filter by language
+      minPrice,        // Minimum price filter
+      maxPrice,        // Maximum price filter
+      authorId,        // Filter by author
+      publisherId,     // Filter by publisher
+      formatType,      // Filter by format (pdf/audio)
+      hasAudio,        // Boolean: has audio format
+      hasPdf,          // Boolean: has pdf format
+      sortBy = 'newest', // Sorting: newest, popular, highest_rated, price_low_high, price_high_low
+      page = 1,        // Pagination
+      limit = 20,      // Items per page
+      includeFormats = false // Include format details
+    } = req.query;
+
+    const offset = (page - 1) * limit;
+
+    // Start building the query
+    let supabaseQuery = supabase
+      .from('books')
+      .select(`
+        *,
+        categories (
+          id,
+          name,
+          description
+        ),
+        book_formats (
+          id,
+          format_type,
+          price,
+          file_url,
+          page_count,
+          duration_sec
+        ),
+        reviews (
+          rating,
+          review_text
+        )
+      `, { count: 'exact' });
+
+    // Apply text search
+    if (query) {
+      supabaseQuery = supabaseQuery.or(
+        `title.ilike.%${query}%,description.ilike.%${query}%,author_name.ilike.%${query}%,publisher_name.ilike.%${query}%`
+      );
+    }
+
+    // Apply category filter
+    if (categoryId) {
+      supabaseQuery = supabaseQuery.eq('category_id', categoryId);
+    }
+
+    // Apply language filter
+    if (language) {
+      supabaseQuery = supabaseQuery.eq('language', language);
+    }
+
+    // Apply author filter
+    if (authorId) {
+      supabaseQuery = supabaseQuery.eq('author_id', authorId);
+    }
+
+    // Apply publisher filter
+    if (publisherId) {
+      supabaseQuery = supabaseQuery.eq('publisher_id', publisherId);
+    }
+
+    // Apply price range filter (based on formats)
+    if (minPrice || maxPrice) {
+      // We'll filter after fetching because price is in book_formats
+      // This is handled in post-processing
+    }
+
+    // Apply sorting
+    switch (sortBy) {
+      case 'newest':
+        supabaseQuery = supabaseQuery.order('created_at', { ascending: false });
+        break;
+      case 'oldest':
+        supabaseQuery = supabaseQuery.order('created_at', { ascending: true });
+        break;
+      case 'price_low_high':
+        // Will sort after processing
+        break;
+      case 'price_high_low':
+        // Will sort after processing
+        break;
+      case 'popular':
+        // Get books with most sales - requires join with book_sales
+        // We'll handle this differently
+        supabaseQuery = supabaseQuery.order('created_at', { ascending: false });
+        break;
+      case 'highest_rated':
+        // Will sort by average rating
+        break;
+      default:
+        supabaseQuery = supabaseQuery.order('created_at', { ascending: false });
+    }
+
+    // Execute query
+    const { data: books, error, count } = await supabaseQuery
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    // Post-process results
+    let processedBooks = await processBookResults(books, {
+      minPrice,
+      maxPrice,
+      formatType,
+      hasAudio,
+      hasPdf,
+      sortBy
+    });
+
+    // Apply additional format filters
+    if (formatType) {
+      processedBooks = processedBooks.filter(book => 
+        book.availableFormats.includes(formatType)
+      );
+    }
+
+    if (hasAudio === 'true') {
+      processedBooks = processedBooks.filter(book => 
+        book.hasAudioFormat
+      );
+    }
+
+    if (hasPdf === 'true') {
+      processedBooks = processedBooks.filter(book => 
+        book.hasPdfFormat
+      );
+    }
+
+    // Calculate pagination
+    const totalItems = processedBooks.length;
+    const paginatedBooks = processedBooks.slice(0, limit);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        books: paginatedBooks,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: totalItems,
+          totalPages: Math.ceil(totalItems / limit),
+          hasMore: offset + limit < totalItems
+        },
+        filters: {
+          query: query || null,
+          categoryId: categoryId || null,
+          language: language || null,
+          sortBy
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Search books error:', error);
+    next(error);
+  }
+};
+
+// Helper function to process book results
+async function processBookResults(books, filters) {
+  const processedBooks = [];
+
+  for (const book of books) {
+    // Calculate price range from formats
+    const prices = book.book_formats?.map(f => parseFloat(f.price || 0)) || [];
+    const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+    const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+
+    // Check format availability
+    const availableFormats = book.book_formats?.map(f => f.format_type) || [];
+    const hasAudioFormat = availableFormats.includes('audio');
+    const hasPdfFormat = availableFormats.includes('pdf');
+
+    // Calculate average rating
+    const ratings = book.reviews?.map(r => r.rating) || [];
+    const averageRating = ratings.length > 0 
+      ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length 
+      : 0;
+
+    // Get sales count for popularity
+    const { data: sales, error } = await supabase
+      .from('book_sales')
+      .select('id', { count: 'exact', head: true })
+      .eq('book_id', book.id);
+
+    const salesCount = error ? 0 : (sales?.length || 0);
+
+    // Create processed book object
+    const processedBook = {
+      id: book.id,
+      title: book.title,
+      description: book.description,
+      authorId: book.author_id,
+      authorName: book.author_name,
+      publisherId: book.publisher_id,
+      publisherName: book.publisher_name,
+      categoryId: book.category_id,
+      category: book.categories,
+      coverImageUrl: book.cover_image_url,
+      language: book.language,
+      uploadedBy: book.uploaded_by,
+      createdAt: book.created_at,
+      // Calculated fields
+      priceRange: {
+        min: minPrice,
+        max: maxPrice
+      },
+      availableFormats,
+      hasAudioFormat,
+      hasPdfFormat,
+      averageRating: parseFloat(averageRating.toFixed(1)),
+      totalReviews: ratings.length,
+      salesCount,
+      // Format details (if requested)
+      formats: filters.includeFormats ? book.book_formats : undefined
+    };
+
+    // Apply price filter
+    if (filters.minPrice && minPrice < parseFloat(filters.minPrice)) {
+      continue;
+    }
+    if (filters.maxPrice && maxPrice > parseFloat(filters.maxPrice)) {
+      continue;
+    }
+
+    processedBooks.push(processedBook);
+  }
+
+  // Apply sorting
+  switch (filters.sortBy) {
+    case 'price_low_high':
+      processedBooks.sort((a, b) => a.priceRange.min - b.priceRange.min);
+      break;
+    case 'price_high_low':
+      processedBooks.sort((a, b) => b.priceRange.max - a.priceRange.max);
+      break;
+    case 'popular':
+      processedBooks.sort((a, b) => b.salesCount - a.salesCount);
+      break;
+    case 'highest_rated':
+      processedBooks.sort((a, b) => b.averageRating - a.averageRating);
+      break;
+  }
+
+  return processedBooks;
+}
+
+// Get all categories for filter dropdown
+export const getCategories = async (req, res, next) => {
+  try {
+    const { data: categories, error } = await supabase
+      .from('categories')
+      .select('*')
+      .order('name');
+
+    if (error) throw error;
+
+    res.status(200).json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get books by category
+export const getBooksByCategory = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const offset = (page - 1) * limit;
+
+    const { data: books, error, count } = await supabase
+      .from('books')
+      .select(`
+        *,
+        categories (
+          id,
+          name,
+          description
+        ),
+        book_formats (
+          id,
+          format_type,
+          price
+        )
+      `, { count: 'exact' })
+      .eq('category_id', categoryId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    // Process books
+    const processedBooks = books.map(book => {
+      const prices = book.book_formats?.map(f => parseFloat(f.price || 0)) || [];
+      return {
+        ...book,
+        priceRange: {
+          min: prices.length > 0 ? Math.min(...prices) : 0,
+          max: prices.length > 0 ? Math.max(...prices) : 0
+        },
+        availableFormats: book.book_formats?.map(f => f.format_type) || []
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        books: processedBooks,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / limit)
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get available languages (for filter dropdown)
+export const getAvailableLanguages = async (req, res, next) => {
+  try {
+    const { data: languages, error } = await supabase
+      .from('books')
+      .select('language')
+      .not('language', 'is', null)
+      .order('language');
+
+    if (error) throw error;
+
+    // Get unique languages
+    const uniqueLanguages = [...new Set(languages.map(l => l.language))];
+
+    res.status(200).json({
+      success: true,
+      data: uniqueLanguages
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Advanced search with aggregations
+export const advancedSearch = async (req, res, next) => {
+  try {
+    const { 
+      query,
+      categoryIds, // Array of category IDs
+      languages,   // Array of languages
+      priceRange,  // {min, max}
+      formatTypes, // Array: ['pdf', 'audio']
+      sortBy,
+      page = 1,
+      limit = 20
+    } = req.body; // Using POST for complex filters
+
+    const offset = (page - 1) * limit;
+
+    let supabaseQuery = supabase
+      .from('books')
+      .select(`
+        *,
+        categories (
+          id,
+          name
+        ),
+        book_formats (
+          id,
+          format_type,
+          price
+        ),
+        reviews (
+          rating
+        )
+      `, { count: 'exact' });
+
+    // Text search
+    if (query) {
+      supabaseQuery = supabaseQuery.or(
+        `title.ilike.%${query}%,description.ilike.%${query}%,author_name.ilike.%${query}%`
+      );
+    }
+
+    // Category filter (multiple)
+    if (categoryIds && categoryIds.length > 0) {
+      supabaseQuery = supabaseQuery.in('category_id', categoryIds);
+    }
+
+    // Language filter (multiple)
+    if (languages && languages.length > 0) {
+      supabaseQuery = supabaseQuery.in('language', languages);
+    }
+
+    // Execute query
+    const { data: books, error, count } = await supabaseQuery
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    // Process and filter results
+    let processedBooks = books.map(book => {
+      const formats = book.book_formats || [];
+      const prices = formats.map(f => parseFloat(f.price || 0));
+      const formatTypesList = formats.map(f => f.format_type);
+      
+      // Calculate average rating
+      const ratings = book.reviews?.map(r => r.rating) || [];
+      const avgRating = ratings.length > 0 
+        ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length 
+        : 0;
+
+      return {
+        ...book,
+        priceRange: {
+          min: prices.length > 0 ? Math.min(...prices) : 0,
+          max: prices.length > 0 ? Math.max(...prices) : 0
+        },
+        availableFormats: formatTypesList,
+        averageRating: parseFloat(avgRating.toFixed(1)),
+        totalReviews: ratings.length
+      };
+    });
+
+    // Apply format type filter
+    if (formatTypes && formatTypes.length > 0) {
+      processedBooks = processedBooks.filter(book =>
+        formatTypes.some(format => book.availableFormats.includes(format))
+      );
+    }
+
+    // Apply price range filter
+    if (priceRange) {
+      processedBooks = processedBooks.filter(book =>
+        book.priceRange.min >= (priceRange.min || 0) &&
+        book.priceRange.max <= (priceRange.max || Infinity)
+      );
+    }
+
+    // Apply sorting
+    if (sortBy) {
+      switch (sortBy) {
+        case 'price_asc':
+          processedBooks.sort((a, b) => a.priceRange.min - b.priceRange.min);
+          break;
+        case 'price_desc':
+          processedBooks.sort((a, b) => b.priceRange.max - a.priceRange.max);
+          break;
+        case 'rating_desc':
+          processedBooks.sort((a, b) => b.averageRating - a.averageRating);
+          break;
+        case 'newest':
+          processedBooks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+          break;
+      }
+    }
+
+    // Paginate
+    const totalItems = processedBooks.length;
+    const paginatedBooks = processedBooks.slice(offset, offset + limit);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        books: paginatedBooks,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: totalItems,
+          totalPages: Math.ceil(totalItems / limit)
+        },
+        meta: {
+          appliedFilters: {
+            query: query || null,
+            categories: categoryIds?.length || 0,
+            languages: languages?.length || 0,
+            priceRange: priceRange || null,
+            formatTypes: formatTypes?.length || 0
+          }
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Advanced search error:', error);
+    next(error);
   }
 };
