@@ -7,6 +7,7 @@ import morgan from 'morgan';
 // Import routes
 import authRoutes from './routes/authRoutes.js';
 import bookRoutes from './routes/bookRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js'; // Add this
 
 // Load environment variables
@@ -43,6 +44,7 @@ app.get('/api/health', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       books: '/api/books',
+      admin: '/api/admin',
       payments: '/api/payments'
     }
   });
@@ -51,6 +53,7 @@ app.get('/api/health', (req, res) => {
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/books', bookRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes); // Add this
 
 // 404 handler
@@ -102,6 +105,7 @@ app.listen(PORT, () => {
       http://localhost:${PORT}/api/health
       http://localhost:${PORT}/api/auth
       http://localhost:${PORT}/api/books
+      http://localhost:${PORT}/api/admin
       http://localhost:${PORT}/api/payments
   `);
 });

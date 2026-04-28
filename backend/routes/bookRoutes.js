@@ -1,61 +1,44 @@
 import express from 'express';
-import { 
-  createBook,
-  getAllBooks,
-  getBookById,
-  updateBook,
-  deleteBook,
-  searchAuthors,
+import {
   addBookFormat,
-  searchBooks,
-  getCategories,
-  getBooksByCategory,
-  getAvailableLanguages,
   advancedSearch,
+  createBook,
+  deleteBook,
+  getAllBooks,
+  getAvailableLanguages,
+  getBookById,
+  getBooksByCategory,
+  getCategories,
+  searchAuthors,
+  searchBooks,
+  updateBook
 } from '../controllers/bookController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
-import { validate } from '../middleware/validation.js';
-import { bookUpdateSchema } from '../middleware/validation.js';
-import { uploadBookFiles, handleUploadError } from '../middleware/upload.js';
+import { bookUpdateSchema, validate } from '../middleware/validation.js';
+import { handleUploadError, uploadBookFiles } from '../middleware/upload.js';
 
 const router = express.Router();
 
-router.get('/search', searchBooks);          // This must come BEFORE /:id
-router.get('/categories', getCategories);    // This must come BEFORE /:id
-router.get('/languages', getAvailableLanguages); // This must come BEFORE /:id
-router.get('/category/:categoryId', getBooksByCategory);
-// Advanced search (POST - complex filters)
-router.post('/search/advanced', advancedSearch);
-
-// Public routes
-router.get('/', getAllBooks);
+router.get('/search', searchBooks);
 router.get('/search/authors', searchAuthors);
+router.post('/search/advanced', advancedSearch);
+router.get('/categories', getCategories);
+router.get('/languages', getAvailableLanguages);
+router.get('/category/:categoryId', getBooksByCategory);
+router.get('/', getAllBooks);
 router.get('/:id', getBookById);
 
-// Create book with file uploads
-router.post('/', 
-  authenticate, 
-  authorize(['author', 'publisher']), // Only authors & publishers
-  uploadBookFiles,          // Handle file uploads
-  handleUploadError,        // Handle upload errors
-  createBook                // Our main controller
+router.post(
+  '/',
+  authenticate,
+  authorize(['author', 'publisher', 'admin']),
+  uploadBookFiles,
+  handleUploadError,
+  createBook
 );
 
-// Get all categories
-router.get('/categories', getCategories);
-
-// Get books by category
-router.get('/category/:categoryId', getBooksByCategory);
-
-// Get available languages
-router.get('/languages', getAvailableLanguages);
-
-// Advanced search (POST - complex filters)
-router.post('/search/advanced', advancedSearch);
-
-// Other routes
 router.put('/:id', authenticate, validate(bookUpdateSchema), updateBook);
 router.delete('/:id', authenticate, deleteBook);
-router.post('/:bookId/formats', authenticate, authorize(['author', 'publisher']), addBookFormat);
+router.post('/:bookId/formats', authenticate, authorize(['author', 'publisher', 'admin']), addBookFormat);
 
 export default router;
