@@ -1,22 +1,26 @@
 import { supabaseAdmin } from '../config/supabase.js';
+import { supabase } from '../config/supabase.js';
 
 export const authenticate = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No token provided' });
+    const token = req.cookies?.token;
+    
+    console.log('Cookie received:', token ? 'Token exists' : 'No token');
+    
+    if (!token) {
+      return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    const token = authHeader.slice('Bearer '.length);
-    const {
-      data: { user },
-      error: authError
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
+    // ✅ VERIFY THE TOKEN with Supabase
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    console.log('Verification result:', { user: user?.id, error: error?.message });
+    
+    if (error || !user) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
+    // Get user from your database
     const { data: dbUser, error: userError } = await supabaseAdmin
       .from('users')
       .select('id, email, role, account_status')

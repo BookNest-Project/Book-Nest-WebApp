@@ -3,9 +3,12 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+ 
 
 // Import routes
-import authRoutes from './routes/authRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 import bookRoutes from './routes/bookRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js'; // Add this
@@ -33,7 +36,7 @@ app.use(morgan('dev'));
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
+app.use(cookieParser());
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -51,7 +54,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Mount routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', userRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes); // Add this
