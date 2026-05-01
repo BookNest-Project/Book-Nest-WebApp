@@ -1,10 +1,20 @@
-// backend/utils/responseFormatter.js
+export const formatSuccess = (data, message = null) => ({
+  success: true,
+  message,
+  data,
+});
 
-/**
- * Format user into SessionUser expected by frontend
- */
+export const formatError = (error, statusCode = 500) => ({
+  success: false,
+  error: {
+    message: error.message || 'Internal server error',
+    code: error.errorCode || 'INTERNAL_ERROR',
+    ...(error.errors && { details: error.errors }),
+  },
+  statusCode,
+});
+
 export const formatSessionUser = (user, profile = null) => {
-  // Determine public name based on role
   let publicName = user.email.split('@')[0];
   let avatarUrl = null;
 
@@ -29,23 +39,19 @@ export const formatSessionUser = (user, profile = null) => {
     email: user.email,
     role: user.role,
     account_status: user.account_status,
-    publicName: publicName,
-    avatarUrl: avatarUrl,
+    publicName,
+    avatarUrl,
   };
 };
 
-/**
- * Create auth session response
- */
 export const createAuthSession = (user, profile = null) => {
-  const issuedAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const now = new Date();
+  const issuedAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   return {
-    session: {
-      user: formatSessionUser(user, profile),
-      issuedAt,
-      expiresAt,
-    },
+    user: formatSessionUser(user, profile),
+    issuedAt,
+    expiresAt,
   };
 };

@@ -1,36 +1,40 @@
-/**
- * Custom error classes for better error handling
- */
-export class ValidationError extends Error {
-  constructor(message, details = []) {
+export class AppError extends Error {
+  constructor(message, statusCode, errorCode = null) {
     super(message);
-    this.name = 'ValidationError';
-    this.details = details;
-    this.statusCode = 400;
+    this.statusCode = statusCode;
+    this.errorCode = errorCode;
+    this.isOperational = true;
+    Error.captureStackTrace(this, this.constructor);
   }
 }
 
-export class AuthenticationError extends Error {
-  constructor(message = 'Authentication failed') {
-    super(message);
-    this.name = 'AuthenticationError';
-    this.statusCode = 401;
+export class ValidationError extends AppError {
+  constructor(message, errors = null) {
+    super(message, 400, 'VALIDATION_ERROR');
+    this.errors = errors;
   }
 }
 
-export class AuthorizationError extends Error {
-  constructor(message = 'Access denied') {
-    super(message);
-    this.name = 'AuthorizationError';
-    this.statusCode = 403;
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Unauthorized') {
+    super(message, 401, 'UNAUTHORIZED');
   }
 }
 
-export class NotFoundError extends Error {
+export class ForbiddenError extends AppError {
+  constructor(message = 'Forbidden') {
+    super(message, 403, 'FORBIDDEN');
+  }
+}
+
+export class NotFoundError extends AppError {
   constructor(resource = 'Resource') {
-    super(`${resource} not found`);
-    this.name = 'NotFoundError';
-    this.statusCode = 404;
+    super(`${resource} not found`, 404, 'NOT_FOUND');
   }
 }
 
+export class ConflictError extends AppError {
+  constructor(message = 'Resource already exists') {
+    super(message, 409, 'CONFLICT');
+  }
+}

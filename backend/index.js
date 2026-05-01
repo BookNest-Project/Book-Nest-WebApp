@@ -9,9 +9,9 @@ import rateLimit from 'express-rate-limit';
 
 // Import routes
 import userRoutes from './routes/userRoutes.js';
-import bookRoutes from './routes/bookRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import paymentRoutes from './routes/paymentRoutes.js'; // Add this
+// import bookRoutes from './routes/bookRoutes.js';
+// import adminRoutes from './routes/adminRoutes.js';
+// import paymentRoutes from './routes/paymentRoutes.js'; // Add this
 
 // Load environment variables
 dotenv.config();
@@ -55,9 +55,9 @@ app.get('/api/health', (req, res) => {
 
 // Mount routes
 app.use('/api/auth', userRoutes);
-app.use('/api/books', bookRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/payments', paymentRoutes); // Add this
+// app.use('/api/books', bookRoutes);
+// app.use('/api/admin', adminRoutes);
+// app.use('/api/payments', paymentRoutes); // Add this
 
 // 404 handler
 app.use((req, res) => {
@@ -68,30 +68,49 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
+// Error handler - UPDATED
 app.use((err, req, res, next) => {
-  console.error('❌ Error:', err.stack);
+  console.error('❌ Error:', err);
   
-  let statusCode = 500;
-  let message = 'Internal server error';
+  // Use error status code if available
+  let statusCode = err.statusCode || 500;
+  let errorMessage = err.message || 'Internal server error';
+  let errorCode = err.errorCode || 'INTERNAL_ERROR';
   
+  // Map common errors
   if (err.name === 'ValidationError') {
     statusCode = 400;
-    message = err.message;
+    errorCode = 'VALIDATION_ERROR';
   } else if (err.name === 'JsonWebTokenError') {
     statusCode = 401;
-    message = 'Invalid token';
+    errorCode = 'INVALID_TOKEN';
+    errorMessage = 'Invalid token';
   } else if (err.name === 'TokenExpiredError') {
     statusCode = 401;
-    message = 'Token expired';
+    errorCode = 'TOKEN_EXPIRED';
+    errorMessage = 'Token expired';
+  } else if (err.name === 'UnauthorizedError') {
+    statusCode = 401;
+    errorCode = 'UNAUTHORIZED';
+  } else if (err.name === 'ForbiddenError') {
+    statusCode = 403;
+    errorCode = 'FORBIDDEN';
+  } else if (err.name === 'NotFoundError') {
+    statusCode = 404;
+    errorCode = 'NOT_FOUND';
+  } else if (err.name === 'ConflictError') {
+    statusCode = 409;
+    errorCode = 'CONFLICT';
   }
   
   res.status(statusCode).json({ 
     success: false,
-    error: message,
-    ...(process.env.NODE_ENV === 'development' && { 
-      message: err.message
-    })
+    error: {
+      message: errorMessage,
+      code: errorCode,
+      ...(err.errors && { details: err.errors }),
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    }
   });
 });
 
