@@ -9,10 +9,14 @@ import rateLimit from 'express-rate-limit';
 
 // Import routes
 import userRoutes from './routes/userRoutes.js';
-// import bookRoutes from './routes/bookRoutes.js';
-// import adminRoutes from './routes/adminRoutes.js';
-// import paymentRoutes from './routes/paymentRoutes.js'; // Add this
+import bookRoutes from './routes/bookRoutes.js';
+import wishlistRoutes from './routes/wishlistRoutes.js';
+import analyticsRoutes from './routes/analyticsRoutes.js';
+import sellerRoutes from './routes/sellerRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
 
+
+ 
 // Load environment variables
 dotenv.config();
 
@@ -27,7 +31,7 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'cookie'],
 }));
 
 // Logging middleware
@@ -55,9 +59,11 @@ app.get('/api/health', (req, res) => {
 
 // Mount routes
 app.use('/api/auth', userRoutes);
-// app.use('/api/books', bookRoutes);
-// app.use('/api/admin', adminRoutes);
-// app.use('/api/payments', paymentRoutes); // Add this
+app.use('/api/books', bookRoutes);
+app.use('/api/wishlist', wishlistRoutes); 
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/seller', sellerRoutes);
+app.use('/api', uploadRoutes);
 
 // 404 handler
 app.use((req, res) => {

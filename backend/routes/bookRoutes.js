@@ -1,44 +1,30 @@
-// import express from 'express';
-// import {
-//   addBookFormat,
-//   advancedSearch,
-//   createBook,
-//   deleteBook,
-//   getAllBooks,
-//   getAvailableLanguages,
-//   getBookById,
-//   getBooksByCategory,
-//   getCategories,
-//   searchAuthors,
-//   searchBooks,
-//   updateBook
-// } from '../controllers/bookController.js';
-// import { authenticate} from '../middleware/auth.js';
-// import { bookUpdateSchema, validate } from '../middleware/validation.js';
-// import { handleUploadError, uploadBookFiles } from '../middleware/upload.js';
+import express from 'express';
+import { bookController } from '../controllers/bookController.js';
+import { authenticate } from '../middleware/auth.js';
 
-// const router = express.Router();
+const router = express.Router();
 
-// router.get('/search', searchBooks);
-// router.get('/search/authors', searchAuthors);
-// router.post('/search/advanced', advancedSearch);
-// router.get('/categories', getCategories);
-// router.get('/languages', getAvailableLanguages);
-// router.get('/category/:categoryId', getBooksByCategory);
-// router.get('/', getAllBooks);
-// router.get('/:id', getBookById);
+// ============================================
+// Public routes (no authentication required)
+// ============================================
+router.get('/genres', bookController.getGenres);
+router.get('/', bookController.getBooks);
 
-// router.post(
-//   '/',
-//   authenticate,
-//   authorize(['author', 'publisher', 'admin']),
-//   uploadBookFiles,
-//   handleUploadError,
-//   createBook
-// );
+// ============================================
+// Protected routes (authentication required)
+// ============================================
+router.use(authenticate);
 
-// router.put('/:id', authenticate, validate(bookUpdateSchema), updateBook);
-// router.delete('/:id', authenticate, deleteBook);
-// //router.post('/:bookId/formats', authenticate, authorize(['author', 'publisher', 'admin']), addBookFormat);
+// ⚠️ IMPORTANT: Specific routes MUST come before parameter routes
+router.get('/my-books', bookController.getMyBooks);  // ✅ BEFORE /:id
 
-// export default router;
+// Parameter route (catch-all) - MUST be LAST
+router.get('/:id', bookController.getBookById);
+
+// Other protected routes
+router.post('/', bookController.createBook);
+router.put('/:id', bookController.updateBook);
+router.delete('/:id', bookController.deleteBook);
+router.put('/:id/cover', bookController.updateBookCover);
+
+export default router;

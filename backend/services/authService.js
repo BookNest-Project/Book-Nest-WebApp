@@ -24,6 +24,7 @@ export const authService = {
     
     logger.info('User registered successfully', { userId: authUser.id, email });
 
+    // Return the user - the controller will handle auto-login
     return { user: authUser };
   },
 
