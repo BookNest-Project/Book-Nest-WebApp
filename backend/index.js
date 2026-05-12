@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
-import { logger } from './utils/logger.js';
+//import { loggering } from './utils/logger.js';
 
 // Import routes
 import userRoutes from './routes/userRoutes.js';
@@ -33,8 +33,16 @@ import progressRoutes from './routes/progressRoutes.js';
 dotenv.config();
 
 const app = express();
+app.use(express.json());
 const PORT = process.env.PORT || 5000;
 
+app.get("/api/health", (req, res) => {
+  return res.status(200).json({
+    status: "OK",
+    service: "BookNest API",
+    time: new Date().toISOString()
+  });
+});
 // Security middleware
 app.use(helmet());
 
@@ -65,25 +73,15 @@ app.use('/api/webhooks', webhookRoutes);
 app.use(morgan('dev'));
 
 // Body parsing middleware
-app.use(express.json());
+//app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 // Health check
- 
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    service: 'BookNest API',
-    version: '1.0.0',
-    endpoints: {
-      auth: '/api/auth',
-      books: '/api/books',
-      admin: '/api/admin',
-      payments: '/api/payments'
-    }
-  });
-});
+console.log("🚀 Starting BookNest backend...");
+console.log("ENV:", process.env.NODE_ENV);
+console.log("PORT:", PORT);
+
+
 // Add this temporarily to debug routes
 app.get('/api/routes', (req, res) => {
   const routes = [];
@@ -179,5 +177,6 @@ export default app;
 // Start server (skip in tests) 
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`BookNest API running on ${PORT}`);
+  console.log("Health check ready at /api/health");
 });
