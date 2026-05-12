@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
-//import { loggering } from './utils/logger.js';
+import { loggering } from './utils/logger.js';
 
 // Import routes
 import userRoutes from './routes/userRoutes.js';
