@@ -4,59 +4,58 @@ import { validateRegister, validateLogin } from '../validators/userValidator.js'
 import { formatSuccess } from '../utils/responseFormatter.js';
 import { logger } from '../utils/logger.js';
 import { supabase, supabaseAdmin } from '../config/supabase.js';
+import { createClient } from '@supabase/supabase-js';
 
 export const userController = {
-  async register(req, res, next) {
-    try {
-      validateRegister(req.body);
-      const { email, password, display_name } = req.body;
-      
-      await authService.register(email, password, display_name);
-      
-      // Auto-login after registration
-      const loginResult = await authService.login(email, password);
-      
-      res.cookie('token', loginResult.token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 60 * 60 * 24 * 7,
-      });
+async register(req, res, next) {
+  try {
+    validateRegister(req.body);
+    const { email, password, display_name } = req.body;
+    
+    await authService.register(email, password, display_name);
+    
+    const loginResult = await authService.login(email, password);
+    
+    res.cookie('token', loginResult.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7 * 1000,
+    });
 
-      logger.info('Registration successful', { email });
-      
-      res.status(201).json(
-        formatSuccess(loginResult.session, 'Account created and logged in successfully')
-      );
-    } catch (error) {
-      next(error);
-    }
-  },
+    logger.info('Registration successful', { email });
+    
+    res.status(201).json(
+      formatSuccess(loginResult.session, 'Account created and logged in successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+},
 
-  async login(req, res, next) {
-    try {
-      validateLogin(req.body);
-      const { email, password } = req.body;
-      
-      const result = await authService.login(email, password);
-      
-      // When setting cookie, use these options for production
-res.cookie('token', data.session.access_token, {
-  httpOnly: true,
-  secure: true, // ✅ MUST be true for HTTPS (Railway/Vercel use HTTPS)
-  sameSite: 'none', // ✅ Required for cross-site requests (different domains)
-  domain: '.railway.app', // ✅ Or omit this to use the current domain
-  path: '/',
-  maxAge: 60 * 60 * 24 * 7 * 1000, // 7 days
-});
+async login(req, res, next) {
+  try {
+    validateLogin(req.body);
+    const { email, password } = req.body;
+    
+    const result = await authService.login(email, password);
+    
+    res.cookie('token', result.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7 * 1000,
+    });
 
-      logger.info('Login successful', { email });
-      
-      res.status(200).json(formatSuccess(result.session, 'Login successful'));
-    } catch (error) {
-      next(error);
-    }
-  },
+    logger.info('Login successful', { email });
+    
+    res.status(200).json(formatSuccess(result.session, 'Login successful'));
+  } catch (error) {
+    next(error);
+  }
+},
 
   async logout(req, res, next) {
     try {
