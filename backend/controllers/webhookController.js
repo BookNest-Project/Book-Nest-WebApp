@@ -1,21 +1,50 @@
+import crypto from 'crypto';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
 
 export const webhookController = {
   async handleChapaWebhook(req, res) {
     try {
-      // Parse the body correctly - it's coming as Buffer
-      let body;
-      if (Buffer.isBuffer(req.body)) {
-        const bodyString = req.body.toString('utf8');
-        body = JSON.parse(bodyString);
-      } else if (typeof req.body === 'string') {
-        body = JSON.parse(req.body);
-      } else {
-        body = req.body;
+      // Get the raw body and signature from headers
+      const rawBody = req.body.toString();
+      const signature = req.headers['x-chapa-signature'] || req.headers['chapa-signature'];
+      
+      // Log webhook receipt
+      logger.info('Webhook received', { 
+        signature: signature ? 'present' : 'missing',
+        bodyLength: rawBody.length
+      });
+
+      // Verify webhook signature (skip if no secret configured, but warn)
+      const webhookSecret = process.env.CHAPA_WEBHOOK_SECRET;
+      
+      if (webhookSecret && signature) {
+        const expectedSignature = crypto
+          .createHmac('sha256', webhookSecret)
+          .update(rawBody)
+          .digest('hex');
+
+        if (signature !== expectedSignature) {
+          logger.error('Invalid webhook signature', { signature, expectedSignature });
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+        logger.info('Webhook signature verified');
+      } else if (!webhookSecret) {
+        logger.warn('CHAPA_WEBHOOK_SECRET not set, skipping signature verification');
+      } else if (!signature) {
+        logger.warn('No signature provided in webhook headers');
       }
 
-      logger.info('Webhook received', { 
+      // Parse the body
+      let body;
+      try {
+        body = JSON.parse(rawBody);
+      } catch (parseError) {
+        logger.error('Failed to parse webhook body', { error: parseError.message });
+        return res.status(400).json({ error: 'Invalid JSON body' });
+      }
+
+      logger.info('Webhook parsed', { 
         event: body.event,
         status: body.status,
         tx_ref: body.tx_ref,
@@ -38,13 +67,12 @@ export const webhookController = {
       logger.info('Processing successful payment', { tx_ref, reference, amount });
 
       // Find transaction by payment_id (tx_ref)
-      // Find transaction by payment_id (which stores the full tx_ref)
-const { data: transaction, error: findError } = await supabaseAdmin
-  .from('transactions')
-  .select('id, user_id, book_format_id, status')
-  .eq('payment_id', tx_ref)
-  .single();
-  
+      const { data: transaction, error: findError } = await supabaseAdmin
+        .from('transactions')
+        .select('id, user_id, book_format_id, status')
+        .eq('payment_id', tx_ref)
+        .single();
+
       if (findError) {
         logger.error('Transaction find error', { tx_ref, error: findError.message });
         return res.status(200).json({ received: true });
@@ -63,15 +91,15 @@ const { data: transaction, error: findError } = await supabaseAdmin
         return res.status(200).json({ received: true });
       }
 
-      // Update transaction with both payment_id (Chapa reference) and tx_ref
-const { error: updateError } = await supabaseAdmin
-  .from('transactions')
-  .update({
-    status: 'completed',
-    payment_id: reference || tx_ref,  // Store Chapa's reference
-    completed_at: new Date().toISOString(),
-  })
-  .eq('id', transaction.id);
+      // Update transaction
+      const { error: updateError } = await supabaseAdmin
+        .from('transactions')
+        .update({
+          status: 'completed',
+          payment_id: reference || tx_ref,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', transaction.id);
 
       if (updateError) {
         logger.error('Transaction update error', { error: updateError.message });
