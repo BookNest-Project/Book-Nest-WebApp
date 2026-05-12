@@ -40,12 +40,15 @@ export const userController = {
       
       const result = await authService.login(email, password);
       
-      res.cookie('token', result.token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 60 * 60 * 24 * 7,
-      });
+      // When setting cookie, use these options for production
+res.cookie('token', data.session.access_token, {
+  httpOnly: true,
+  secure: true, // ✅ MUST be true for HTTPS (Railway/Vercel use HTTPS)
+  sameSite: 'none', // ✅ Required for cross-site requests (different domains)
+  domain: '.railway.app', // ✅ Or omit this to use the current domain
+  path: '/',
+  maxAge: 60 * 60 * 24 * 7 * 1000, // 7 days
+});
 
       logger.info('Login successful', { email });
       

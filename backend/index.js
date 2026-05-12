@@ -25,17 +25,16 @@ import webhookRoutes from './routes/webhookRoutes.js';
 import downloadRoutes from './routes/downloadRoutes.js';
 import progressRoutes from './routes/progressRoutes.js';
 
-
-
-
- 
 // Load environment variables
 dotenv.config();
 
 const app = express();
-app.use(express.json());
 const PORT = process.env.PORT || 5000;
 
+// ✅ FIX 1: Trust proxy (required for Railway)
+app.set('trust proxy', 1);
+
+// Health check (MUST be before other middleware)
 app.get("/api/health", (req, res) => {
   return res.status(200).json({
     status: "OK",
@@ -43,8 +42,32 @@ app.get("/api/health", (req, res) => {
     time: new Date().toISOString()
   });
 });
+
 // Security middleware
 app.use(helmet());
+
+// ✅ FIX 2: Updated CORS configuration for production
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://book-nest-frontend-v2-main.vercel.app",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cookie', 'cookie'],
+}));
 
 // Basic API rate limiting
 app.use(
@@ -53,36 +76,23 @@ app.use(
     max: 600,
     standardHeaders: true,
     legacyHeaders: false,
-  }),
+    // ✅ FIX 3: Skip rate limiting for webhooks
+    skip: (req) => req.path.startsWith('/api/webhooks'),
+  })
 );
-
-// CORS configuration
-app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://book-nest-frontend-v2-main.vercel.app"
-  ], 
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'cookie'],
-}));
-
-app.use('/api/webhooks', webhookRoutes);
 
 // Logging middleware
 app.use(morgan('dev'));
 
 // Body parsing middleware
-//app.use(express.json());
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-// Health check
-console.log("🚀 Starting BookNest backend...");
-console.log("ENV:", process.env.NODE_ENV);
-console.log("PORT:", PORT);
 
+// ✅ FIX 4: Webhook routes must be BEFORE express.json()
+app.use('/api/webhooks', webhookRoutes);
 
-// Add this temporarily to debug routes
+// Debug routes (optional, remove in production)
 app.get('/api/routes', (req, res) => {
   const routes = [];
   app._router.stack.forEach(middleware => {
@@ -99,10 +109,11 @@ app.get('/api/routes', (req, res) => {
   });
   res.json({ routes });
 });
-// Mount routes
+
+// ✅ FIX 5: Mount all API routes
 app.use('/api/auth', userRoutes);
 app.use('/api/books', bookRoutes);
-app.use('/api/wishlist', wishlistRoutes); 
+app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api', uploadRoutes);
@@ -110,15 +121,15 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/community', communityRoutes);
-app.use('/api/cart', cartRoutes); 
+app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/library', libraryRoutes);
 app.use('/api/download', downloadRoutes);
-app.use('/api/progress',progressRoutes);
-
+app.use('/api/progress', progressRoutes);
 
 // 404 handler
 app.use((req, res) => {
+  logger.warn('Endpoint not found', { path: req.originalUrl, method: req.method });
   res.status(404).json({ 
     error: 'Endpoint not found',
     path: req.originalUrl,
@@ -126,16 +137,14 @@ app.use((req, res) => {
   });
 });
 
-// Error handler - UPDATED
+// ✅ FIX 6: Global error handler
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', { message: err?.message, name: err?.name, stack: err?.stack });
   
-  // Use error status code if available
   let statusCode = err.statusCode || 500;
   let errorMessage = err.message || 'Internal server error';
   let errorCode = err.errorCode || 'INTERNAL_ERROR';
   
-  // Map common errors
   if (err.name === 'ValidationError') {
     statusCode = 400;
     errorCode = 'VALIDATION_ERROR';
@@ -172,11 +181,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-export default app;
-
-// Start server (skip in tests) 
-
+// Start server
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`BookNest API running on ${PORT}`);
-  console.log("Health check ready at /api/health");
+  console.log(`🚀 BookNest API running on port ${PORT}`);
+  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
+
+export default app;
