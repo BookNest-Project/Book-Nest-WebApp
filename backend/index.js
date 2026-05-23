@@ -24,7 +24,11 @@ import libraryRoutes from './routes/libraryRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
 import downloadRoutes from './routes/downloadRoutes.js';
 import progressRoutes from './routes/progressRoutes.js';
-
+import chatRoutes from './routes/chatRoutes.js';
+import followRoutes from './routes/followRoutes.js';
+import profileRoute from './routes/profileRoutes.js';
+import feedRoutes from './routes/feedRoutes.js';
+import publicRoute from './routes/publicRoutes.js'
 // Load environment variables
 dotenv.config();
 
@@ -126,6 +130,11 @@ app.use('/api/checkout', checkoutRoutes);
 app.use('/api/library', libraryRoutes);
 app.use('/api/download', downloadRoutes);
 app.use('/api/progress', progressRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/follow', followRoutes);
+app.use('/api/profile', profileRoute);
+app.use('/api/feed', feedRoutes);
+app.use('/api/public', publicRoute);
 
 // 404 handler
 app.use((req, res) => {

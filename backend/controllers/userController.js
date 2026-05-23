@@ -299,7 +299,73 @@ async forgotPassword(req, res, next) {
     next(error);
   }
 },
+/**
+ * Search users by name or email
+ * GET /api/users/search
+ */
+async searchUsers(req, res, next) {
+  try {
+    const { q } = req.query;
+    const currentUserId = req.user.id;
 
+    console.log('Search users query:', q);
+
+    if (!q || q.length < 2) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    // Search in users table
+    const { data: users, error } = await supabaseAdmin
+      .from('users')
+      .select('id, email, avatar_url, role')
+      .ilike('email', `%${q}%`)
+      .neq('id', currentUserId)
+      .limit(20);
+
+    if (error) throw error;
+
+    // Get profile names based on role
+    const formattedUsers = await Promise.all(users.map(async (user) => {
+      let name = user.email.split('@')[0];
+      
+      if (user.role === 'author') {
+        const { data: profile } = await supabaseAdmin
+          .from('author_profiles')
+          .select('pen_name')
+          .eq('user_id', user.id)
+          .single();
+        if (profile?.pen_name) name = profile.pen_name;
+      } else if (user.role === 'publisher') {
+        const { data: profile } = await supabaseAdmin
+          .from('publisher_profiles')
+          .select('company_name')
+          .eq('user_id', user.id)
+          .single();
+        if (profile?.company_name) name = profile.company_name;
+      } else if (user.role === 'reader') {
+        const { data: profile } = await supabaseAdmin
+          .from('reader_profiles')
+          .select('display_name')
+          .eq('user_id', user.id)
+          .single();
+        if (profile?.display_name) name = profile.display_name;
+      }
+
+      return {
+        id: user.id,
+        name: name,
+        email: user.email,
+        avatarUrl: user.avatar_url,
+        role: user.role,
+      };
+    }));
+
+    res.status(200).json({ success: true, data: formattedUsers });
+  } catch (error) {
+    console.error('Search users error:', error);
+    next(error);
+  }
+},
 /**
  * Update password
  * POST /api/auth/update-password

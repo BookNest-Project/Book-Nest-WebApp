@@ -10,9 +10,11 @@ router.post('/login', userController.login);
 router.post('/logout', userController.logout);
 
 // Protected routes (require authentication)
+router.get('/search', authenticate, userController.searchUsers);
 router.get('/me', authenticate, userController.me);
 router.get('/profile', authenticate, userController.getProfile);
 router.put('/profile', authenticate, userController.updateProfile);
+
 
 // ✅ ADD THESE NEW ROUTES
 router.post('/favorite-genres', authenticate, userController.saveFavoriteGenres);
