@@ -67,4 +67,16 @@ export const followController = {
       next(error);
     }
   },
+
+  async toggleFollow(req, res, next) {
+    try {
+      const followerId = req.user.id;
+      const { userId } = req.params;
+
+      const result = await followRepository.toggleFollow(followerId, userId);
+      res.status(200).json(formatSuccess(result, 'Follow state updated'));
+    } catch (error) {
+      next(error);
+    }
+  },
 };

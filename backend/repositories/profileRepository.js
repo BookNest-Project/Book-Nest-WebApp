@@ -184,7 +184,7 @@ export const profileRepository = {
     }
   },
 
-  async getPublicProfile(username) {
+  async getPublicProfile(username, currentUserId = null) {
     try {
       // First find user by email (username is email prefix)
       const { data: user, error: userError } = await supabaseAdmin
@@ -247,17 +247,26 @@ export const profileRepository = {
         isPrivate: !isPublic,
       };
 
-      // Get counts only if public
-      if (isPublic) {
-        const [followersCount, followingCount, postsCount] = await Promise.all([
-          supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', user.id),
-          supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('follower_id', user.id),
-          supabaseAdmin.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'published'),
-        ]);
+      const [followersCount, followingCount, postsCount] = await Promise.all([
+        supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', user.id),
+        supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('follower_id', user.id),
+        supabaseAdmin.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'published'),
+      ]);
 
-        publicProfile.followerCount = followersCount.count || 0;
-        publicProfile.followingCount = followingCount.count || 0;
-        publicProfile.postCount = postsCount.count || 0;
+      publicProfile.followerCount = followersCount.count || 0;
+      publicProfile.followingCount = followingCount.count || 0;
+      publicProfile.postCount = postsCount.count || 0;
+
+      if (currentUserId && currentUserId !== user.id) {
+        const { data: followRelation } = await supabaseAdmin
+          .from('follows')
+          .select('id')
+          .eq('follower_id', currentUserId)
+          .eq('following_id', user.id)
+          .maybeSingle();
+        publicProfile.isFollowing = !!followRelation;
+      } else {
+        publicProfile.isFollowing = false;
       }
 
       return publicProfile;

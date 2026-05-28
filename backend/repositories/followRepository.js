@@ -143,4 +143,42 @@ export const followRepository = {
       throw error;
     }
   },
+
+  async toggleFollow(followerId, followingId) {
+    try {
+      if (followerId === followingId) {
+        throw new Error('Cannot follow yourself');
+      }
+
+      const currentlyFollowing = await this.isFollowing(followerId, followingId);
+
+      if (currentlyFollowing) {
+        await this.unfollow(followerId, followingId);
+      } else {
+        await this.follow(followerId, followingId);
+      }
+
+      const isFollowing = !currentlyFollowing;
+
+      const [followersCount, followingCount] = await Promise.all([
+        supabaseAdmin
+          .from('follows')
+          .select('id', { count: 'exact', head: true })
+          .eq('following_id', followingId),
+        supabaseAdmin
+          .from('follows')
+          .select('id', { count: 'exact', head: true })
+          .eq('follower_id', followerId),
+      ]);
+
+      return {
+        isFollowing,
+        followerCount: followersCount.count || 0,
+        followingCount: followingCount.count || 0,
+      };
+    } catch (error) {
+      logger.error('Toggle follow error', { error: error.message });
+      throw error;
+    }
+  },
 };
