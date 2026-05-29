@@ -19,11 +19,13 @@ export const validateBookQuery = (query) => {
     }
   }
 
-  // Validate genreId (if provided, it should be a valid UUID format)
-  if (query.genreId && query.genreId !== 'all') {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(query.genreId)) {
-      errors.genreId = 'Invalid genre ID format';
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // Validate genre (if provided, it should be a valid UUID format)
+  const genreParam = query.genre || query.genreId;
+  if (genreParam && genreParam !== 'all') {
+    if (!uuidRegex.test(genreParam)) {
+      errors.genre = 'Invalid genre ID format';
     }
   }
 

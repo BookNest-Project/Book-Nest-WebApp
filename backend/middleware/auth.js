@@ -71,6 +71,64 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
+/**
+ * Optional authentication middleware.
+ * - If no token: continue as guest
+ * - If token invalid/expired: continue as guest (do not throw)
+ */
+export const authenticateOptional = async (req, res, next) => {
+  try {
+    const token = req.cookies?.token;
+    if (!token) return next();
+
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return next();
+
+    const { data: dbUser, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role, account_status')
+      .eq('id', user.id)
+      .single();
+    if (userError || !dbUser) return next();
+    if (dbUser.account_status !== 'active') return next();
+
+    let publicName = dbUser.email.split('@')[0];
+    if (dbUser.role === 'author') {
+      const { data: profile } = await supabaseAdmin
+        .from('author_profiles')
+        .select('pen_name')
+        .eq('user_id', dbUser.id)
+        .single();
+      if (profile?.pen_name) publicName = profile.pen_name;
+    } else if (dbUser.role === 'publisher') {
+      const { data: profile } = await supabaseAdmin
+        .from('publisher_profiles')
+        .select('company_name')
+        .eq('user_id', dbUser.id)
+        .single();
+      if (profile?.company_name) publicName = profile.company_name;
+    } else if (dbUser.role === 'reader') {
+      const { data: profile } = await supabaseAdmin
+        .from('reader_profiles')
+        .select('display_name')
+        .eq('user_id', dbUser.id)
+        .single();
+      if (profile?.display_name) publicName = profile.display_name;
+    }
+
+    req.user = {
+      id: dbUser.id,
+      email: dbUser.email,
+      role: dbUser.role,
+      publicName,
+    };
+
+    return next();
+  } catch {
+    return next();
+  }
+};
+
 export const authorize = (allowedRoles = []) => {
   return (req, res, next) => {
     const role = req.user?.role;

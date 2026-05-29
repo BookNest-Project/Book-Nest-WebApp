@@ -1,6 +1,7 @@
 import { cartRepository } from '../repositories/cartRepository.js';
-import { ValidationError } from '../utils/errors.js';
+import { ValidationError, ConflictError, ForbiddenError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { assertCanPurchaseFormats } from '../utils/purchaseValidation.js';
 
 export const cartService = {
   async getCart(userId) {
@@ -13,6 +14,18 @@ export const cartService = {
   async addToCart(userId, bookFormatId) {
     if (!userId) throw new ValidationError('User ID is required');
     if (!bookFormatId) throw new ValidationError('Book format ID is required');
+
+    try {
+      await assertCanPurchaseFormats(userId, [bookFormatId]);
+    } catch (error) {
+      if (error.statusCode === 403) {
+        throw new ForbiddenError(error.message);
+      }
+      if (error.statusCode === 409) {
+        throw new ConflictError(error.message);
+      }
+      throw error;
+    }
 
     const { cart, error: cartError } = await cartRepository.getOrCreateCart(userId);
     if (cartError) throw new Error(cartError);

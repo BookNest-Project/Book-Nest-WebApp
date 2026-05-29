@@ -35,6 +35,15 @@ export const bookController = {
     }
   },
 
+  async getLanguages(req, res, next) {
+    try {
+      const languages = await bookService.getLanguages();
+      res.status(200).json(formatSuccess(languages, 'Languages retrieved successfully'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   /**
    * Get books with filters and pagination
    * GET /api/books
@@ -62,6 +71,25 @@ export const bookController = {
       });
       
       res.status(200).json(formatSuccess(result, 'Books retrieved successfully'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getPersonalizedBooks(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const limit = req.query.limit;
+
+      const result = await bookService.getPersonalizedBooks(userId, limit);
+
+      logger.info('Personalized books fetched', {
+        userId,
+        count: result.books.length,
+        personalized: result.meta.personalized,
+      });
+
+      res.status(200).json(formatSuccess(result, 'Personalized books retrieved successfully'));
     } catch (error) {
       next(error);
     }
@@ -187,7 +215,7 @@ async getBookById(req, res, next) {
   },
 
   /**
-   * Delete (soft delete) a book
+   * Permanently delete a book
    * DELETE /api/books/:id
    */
   async deleteBook(req, res, next) {
@@ -217,6 +245,36 @@ async getBookById(req, res, next) {
       const result = await bookService.getMyBooks(userId, page, limit);
 
       res.status(200).json(formatSuccess(result, 'My books retrieved successfully'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Submit a draft/rejected book for admin review
+   * POST /api/books/:id/submit
+   */
+  async getBookForEdit(req, res, next) {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      validateBookId(id);
+      const book = await bookService.getBookForEdit(id, userId);
+      res.status(200).json(formatSuccess(book, 'Book retrieved for editing'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async submitBookForReview(req, res, next) {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+
+      validateBookId(id);
+
+      const book = await bookService.submitBookForReview(id, userId);
+      res.status(200).json(formatSuccess(book, 'Book submitted for review'));
     } catch (error) {
       next(error);
     }

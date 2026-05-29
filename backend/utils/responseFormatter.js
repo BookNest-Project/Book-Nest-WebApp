@@ -44,10 +44,17 @@ export const formatSessionUser = (user, profile = null) => {
   };
 };
 
-export const createAuthSession = (user, profile = null) => {
+export const SESSION_DURATION_DEFAULT_MS = 24 * 60 * 60 * 1000;
+export const SESSION_DURATION_REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const createAuthSession = (
+  user,
+  profile = null,
+  durationMs = SESSION_DURATION_DEFAULT_MS
+) => {
   const now = new Date();
   const issuedAt = now.toISOString();
-  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(now.getTime() + durationMs).toISOString();
 
   return {
     user: formatSessionUser(user, profile),

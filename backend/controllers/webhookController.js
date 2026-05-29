@@ -1,12 +1,18 @@
 import crypto from 'crypto';
 import { supabaseAdmin } from '../config/supabase.js';
+import { checkoutService } from '../services/checkoutService.js';
 import { logger } from '../utils/logger.js';
 
 export const webhookController = {
   async handleChapaWebhook(req, res) {
     try {
       // Get the raw body and signature from headers
-      const rawBody = req.body.toString();
+      const rawBody =
+        typeof req.body === 'string'
+          ? req.body
+          : Buffer.isBuffer(req.body)
+            ? req.body.toString('utf8')
+            : JSON.stringify(req.body);
       const signature = req.headers['x-chapa-signature'] || req.headers['chapa-signature'];
       
       // Log webhook receipt
@@ -108,51 +114,7 @@ export const webhookController = {
 
       logger.info('Transaction updated', { transactionId: transaction.id });
 
-      // Add to user purchases
-      const { error: purchaseError } = await supabaseAdmin
-        .from('user_purchases')
-        .insert({
-          user_id: transaction.user_id,
-          book_format_id: transaction.book_format_id,
-          transaction_id: transaction.id,
-        });
-
-      if (purchaseError) {
-        logger.error('Purchase insert error', { error: purchaseError.message });
-      } else {
-        logger.info('Purchase added', { userId: transaction.user_id, bookFormatId: transaction.book_format_id });
-      }
-
-      // Update book sales count
-      const { data: bookFormat } = await supabaseAdmin
-        .from('book_formats')
-        .select('book_id')
-        .eq('id', transaction.book_format_id)
-        .single();
-
-      if (bookFormat) {
-        await supabaseAdmin.rpc('increment_book_sales', {
-          book_id: bookFormat.book_id,
-          amount: 1,
-        });
-        logger.info('Book sales incremented', { bookId: bookFormat.book_id });
-      }
-
-      // Clear cart item if exists
-      const { data: cart } = await supabaseAdmin
-        .from('carts')
-        .select('id')
-        .eq('user_id', transaction.user_id)
-        .single();
-
-      if (cart) {
-        await supabaseAdmin
-          .from('cart_items')
-          .delete()
-          .eq('cart_id', cart.id)
-          .eq('book_format_id', transaction.book_format_id);
-        logger.info('Cart item cleared', { cartId: cart.id });
-      }
+      await checkoutService.fulfillTransaction(transaction);
 
       logger.info('Payment completed via webhook', {
         transactionId: transaction.id,

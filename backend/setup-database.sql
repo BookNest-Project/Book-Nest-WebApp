@@ -163,6 +163,7 @@ create table public.books (
   cover_image_path text not null,
   cover_image_url text,
   status public.book_status not null default 'draft',
+  is_active boolean not null default true,
   uploaded_by uuid not null references public.users (id) on delete restrict,
   reviewed_by_admin_id uuid references public.users (id) on delete set null,
   reviewed_at timestamptz,
@@ -185,6 +186,11 @@ create index books_uploaded_by_idx on public.books (uploaded_by);
 create index books_status_idx on public.books (status, created_at desc);
 create index books_title_idx on public.books (lower(title));
 
+-- One active catalog row per title + language (translations use different language)
+create unique index if not exists books_unique_title_language_active
+  on public.books (lower(btrim(title)), language)
+  where (is_active is distinct from false) and (status <> 'archived');
+
 create table public.reader_favorite_genres (
   reader_user_id uuid not null references public.reader_profiles (user_id) on delete cascade,
   genre_id uuid not null references public.genres (id) on delete cascade,
@@ -204,6 +210,8 @@ create table public.book_formats (
   file_size_bytes bigint,
   page_count integer,
   duration_sec integer,
+  status public.book_status not null default 'draft',
+  is_active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   constraint book_formats_unique unique (book_id, format_type),

@@ -176,6 +176,39 @@ export const linkPublisherProfile = async (req, res) => {
   }
 };
 
+export const reviewBookFormat = async (req, res) => {
+  try {
+    const { bookId, formatId } = req.params;
+    const { status, review_note } = req.body;
+
+    const isActive = status === 'approved';
+
+    const { data, error } = await supabaseAdmin
+      .from('book_formats')
+      .update({
+        is_active: isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', formatId)
+      .eq('book_id', bookId)
+      .select('*')
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Format review status updated successfully',
+      format: data,
+      review_note: review_note || null,
+    });
+  } catch (error) {
+    console.error('Review book format error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const reviewBook = async (req, res) => {
   try {
     const { id } = req.params;
@@ -202,6 +235,21 @@ export const reviewBook = async (req, res) => {
 
     if (error) {
       return res.status(400).json({ error: error.message });
+    }
+
+    if (status === 'approved') {
+      await supabaseAdmin
+        .from('book_formats')
+        .update({ status: 'approved' })
+        .eq('book_id', id)
+        .eq('is_active', true)
+        .in('status', ['pending_review', 'draft']);
+    } else if (status === 'rejected') {
+      await supabaseAdmin
+        .from('book_formats')
+        .update({ status: 'rejected' })
+        .eq('book_id', id)
+        .eq('is_active', true);
     }
 
     res.json({

@@ -28,13 +28,14 @@ export class ForbiddenError extends AppError {
 }
 
 export class NotFoundError extends AppError {
-  constructor(resource = 'Resource') {
-    super(`${resource} not found`, 404, 'NOT_FOUND');
+  constructor(message = 'Resource not found') {
+    super(message, 404, 'NOT_FOUND');
   }
 }
 
 export class ConflictError extends AppError {
-  constructor(message = 'Resource already exists') {
-    super(message, 409, 'CONFLICT');
+  constructor(message = 'Resource already exists', existingBookId = null) {
+    super(message, 409, 'DUPLICATE_BOOK');
+    this.existingBookId = existingBookId;
   }
 }

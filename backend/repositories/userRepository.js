@@ -1,17 +1,31 @@
+// backend/repositories/userRepository.js
 import { supabaseAdmin } from '../config/supabase.js';
-import { NotFoundError, ConflictError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 export const userRepository = {
   async findById(userId) {
     const { data: user, error } = await supabaseAdmin
       .from('users')
-      .select('id, email, role, account_status, created_at, updated_at')
+      .select('id, email, role, account_status, is_email_verified, created_at, updated_at')
       .eq('id', userId)
       .single();
 
     if (error) {
       logger.error('User findById error', { userId, error: error.message });
+      return null;
+    }
+    return user;
+  },
+
+  async findByEmail(email) {
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role, account_status, is_email_verified, created_at, updated_at')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error) {
+      logger.error('User findByEmail error', { email, error: error.message });
       return null;
     }
     return user;
@@ -90,36 +104,6 @@ export const userRepository = {
     return (genres || []).map(item => item.genre).filter(Boolean);
   },
 
-  async createAuthUser(email, password, displayName) {
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { display_name: displayName },
-      app_metadata: { role: 'reader' },
-    });
-
-    if (error) {
-      if (error.message?.toLowerCase().includes('already')) {
-        throw new ConflictError('Email already registered');
-      }
-      throw error;
-    }
-
-    return data.user;
-  },
-
-  async verifyCredentials(email, password) {
-    const { supabase } = await import('../config/supabase.js');
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    
-    if (error) {
-      return { user: null, session: null, error };
-    }
-    
-    return { user: data.user, session: data.session, error: null };
-  },
-
   async updateReaderProfile(userId, updates) {
     const { error } = await supabaseAdmin
       .from('reader_profiles')
@@ -153,6 +137,119 @@ export const userRepository = {
     if (error) {
       logger.error('Update favorite genres error', { userId, genreIds, error: error.message });
       return false;
+    }
+    return true;
+  },
+
+  async updateEmailVerification(userId, isVerified, verifiedAt = null) {
+    const payload = {
+      is_email_verified: isVerified,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (isVerified && verifiedAt) {
+      payload.email_verified_at = verifiedAt;
+    }
+
+    const { error } = await supabaseAdmin
+      .from('users')
+      .update(payload)
+      .eq('id', userId);
+
+    if (error) {
+      logger.error('Update email verification error', { userId, error: error.message });
+      return false;
+    }
+    return true;
+  },
+
+  async isDisplayNameTaken(displayName, excludeUserId = null) {
+    const trimmed = displayName.trim();
+    let query = supabaseAdmin
+      .from('reader_profiles')
+      .select('user_id')
+      .ilike('display_name', trimmed)
+      .limit(1);
+
+    if (excludeUserId) {
+      query = query.neq('user_id', excludeUserId);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error) {
+      logger.error('Display name check error', { displayName: trimmed, error: error.message });
+      return false;
+    }
+    return !!data;
+  },
+
+  /**
+   * Create or update reader profile (Supabase trigger may already insert a row).
+   */
+  async upsertReaderProfile(userId, displayName) {
+    const trimmed = displayName.trim();
+
+    const { data: existing } = await supabaseAdmin
+      .from('reader_profiles')
+      .select('user_id, display_name')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existing) {
+      if (existing.display_name?.toLowerCase() === trimmed.toLowerCase()) {
+        return true;
+      }
+
+      const taken = await this.isDisplayNameTaken(trimmed, userId);
+      if (taken) {
+        throw new Error('DISPLAY_NAME_TAKEN');
+      }
+
+      const { error } = await supabaseAdmin
+        .from('reader_profiles')
+        .update({ display_name: trimmed })
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error('Update reader profile error', { userId, error: error.message });
+        if (error.code === '23505') {
+          throw new Error('DISPLAY_NAME_TAKEN');
+        }
+        throw error;
+      }
+      return true;
+    }
+
+    const taken = await this.isDisplayNameTaken(trimmed);
+    if (taken) {
+      throw new Error('DISPLAY_NAME_TAKEN');
+    }
+
+    const { error } = await supabaseAdmin.from('reader_profiles').insert({
+      user_id: userId,
+      display_name: trimmed,
+    });
+
+    if (error) {
+      logger.error('Create reader profile error', { userId, error: error.message });
+      if (error.code === '23505') {
+        if (error.message?.includes('reader_profiles_pkey')) {
+          const { error: updateError } = await supabaseAdmin
+            .from('reader_profiles')
+            .update({ display_name: trimmed })
+            .eq('user_id', userId);
+          if (updateError) {
+            if (updateError.code === '23505') {
+              throw new Error('DISPLAY_NAME_TAKEN');
+            }
+            throw updateError;
+          }
+          return true;
+        }
+        throw new Error('DISPLAY_NAME_TAKEN');
+      }
+      throw error;
     }
     return true;
   },

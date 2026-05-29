@@ -1,54 +1,92 @@
+// backend/services/authService.js
 import { userRepository } from '../repositories/userRepository.js';
-import { UnauthorizedError, ValidationError } from '../utils/errors.js';
-import { createAuthSession, formatSessionUser } from '../utils/responseFormatter.js';
+import { authRepository } from '../repositories/authRepository.js';
+import { UnauthorizedError, ValidationError, ForbiddenError, NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import {
+  createAuthSession,
+  SESSION_DURATION_DEFAULT_MS,
+  SESSION_DURATION_REMEMBER_MS,
+} from '../utils/responseFormatter.js';
 
 export const authService = {
+  /**
+   * Public self-registration for readers only (no invitation).
+   */
   async register(email, password, displayName) {
-    // Validate input
-    if (!email || !password || !displayName) {
-      throw new ValidationError('Email, password, and display name are required');
+    const existingUser = await userRepository.findByEmail(email);
+    if (existingUser) {
+      throw new ValidationError('Email already registered');
     }
 
-    if (password.length < 6) {
-      throw new ValidationError('Password must be at least 6 characters');
+    const trimmedName = displayName.trim();
+    if (await userRepository.isDisplayNameTaken(trimmedName)) {
+      throw new ValidationError('This display name is already taken');
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      throw new ValidationError('Invalid email format');
+    let authUser;
+    try {
+      // signUp sends the confirmation email; admin.createUser does not.
+      authUser = await authRepository.signUpReader(email, password, {
+        display_name: trimmedName,
+        role: 'reader',
+      });
+    } catch (error) {
+      if (error.message === 'EMAIL_ALREADY_REGISTERED') {
+        throw new ValidationError('Email already registered');
+      }
+      throw error;
     }
 
-    // Create user
-    const authUser = await userRepository.createAuthUser(email, password, displayName);
-    
-    logger.info('User registered successfully', { userId: authUser.id, email });
+    try {
+      await userRepository.upsertReaderProfile(authUser.id, trimmedName);
+    } catch (error) {
+      if (error.message === 'DISPLAY_NAME_TAKEN') {
+        throw new ValidationError('This display name is already taken');
+      }
+      throw error;
+    }
 
-    // Return the user - the controller will handle auto-login
-    return { user: authUser };
+    logger.info('Reader registered successfully', { userId: authUser.id, email });
+
+    return {
+      message: 'Verification email sent. Please check your inbox.',
+      email: authUser.email,
+    };
   },
 
-  async login(email, password) {
-    if (!email || !password) {
-      throw new ValidationError('Email and password are required');
-    }
-
-    const { user: authUser, session, error } = await userRepository.verifyCredentials(email, password);
+  async login(email, password, rememberMe = false) {
+    const { user: authUser, session, error } = await authRepository.verifyCredentials(email, password);
 
     if (error || !authUser) {
-      logger.warn('Login failed', { email, error: error?.message });
+      logger.warn('Login failed - invalid credentials', { email });
       throw new UnauthorizedError('Invalid email or password');
     }
 
-    // Get full user data from database
-    const dbUser = await userRepository.findById(authUser.id);
-    
+    let dbUser = await userRepository.findByEmail(email);
+
     if (!dbUser) {
       throw new UnauthorizedError('User account not found');
     }
 
+    if (dbUser.role === 'admin') {
+      throw new ForbiddenError('Unable to sign in with this account.');
+    }
+
     if (dbUser.account_status !== 'active') {
-      throw new UnauthorizedError('Account is not active');
+      throw new ForbiddenError('Your account has been suspended. Please contact support.');
+    }
+
+    const confirmedAt = authUser.email_confirmed_at || authUser.confirmed_at;
+    if (confirmedAt && !dbUser.is_email_verified) {
+      await userRepository.updateEmailVerification(dbUser.id, true, confirmedAt);
+      dbUser = { ...dbUser, is_email_verified: true };
+    }
+
+    if (!dbUser.is_email_verified) {
+      throw new ForbiddenError(
+        'Please verify your email before logging in. Check your inbox for the verification link.'
+      );
     }
 
     let profile = null;
@@ -62,23 +100,114 @@ export const authService = {
       case 'publisher':
         profile = await userRepository.findPublisherProfile(authUser.id);
         break;
-      case 'admin':
-        profile = await userRepository.findAdminProfile(authUser.id);
+      default:
         break;
     }
 
-    logger.info('User logged in successfully', { userId: authUser.id, role: dbUser.role });
+    const durationMs = rememberMe
+      ? SESSION_DURATION_REMEMBER_MS
+      : SESSION_DURATION_DEFAULT_MS;
+
+    const authSession = createAuthSession(dbUser, profile, durationMs);
+    const expiresAtMs = new Date(authSession.expiresAt).getTime();
+
+    let needsGenreOnboarding = false;
+    if (dbUser.role === 'reader') {
+      const favoriteGenres = await userRepository.findFavoriteGenres(dbUser.id);
+      needsGenreOnboarding = favoriteGenres.length === 0;
+    }
+
+    logger.info('User logged in successfully', { userId: dbUser.id, role: dbUser.role });
 
     return {
       token: session.access_token,
       refreshToken: session.refresh_token,
-      session: createAuthSession(dbUser, profile),
+      expiresAt: expiresAtMs,
+      rememberMe: !!rememberMe,
+      needsGenreOnboarding,
+      session: authSession,
     };
   },
 
-  async getUserSession(userId) {
+  async confirmEmail(accessToken) {
+    const authUser = await authRepository.getUserFromAccessToken(accessToken);
+    if (!authUser) {
+      throw new ValidationError('Invalid or expired verification link. Please request a new one.');
+    }
+
+    const dbUser = await userRepository.findByEmail(authUser.email);
+    if (!dbUser) {
+      throw new ValidationError('Account not found. Please register again.');
+    }
+
+    const confirmedAt =
+      authUser.email_confirmed_at || authUser.confirmed_at || new Date().toISOString();
+
+    await userRepository.updateEmailVerification(dbUser.id, true, confirmedAt);
+
+    logger.info('Email confirmed via link', { userId: dbUser.id, email: dbUser.email });
+
+    return {
+      message: 'Email verified successfully. You can now sign in.',
+      email: dbUser.email,
+    };
+  },
+
+  async forgotPassword(email) {
+    const user = await userRepository.findByEmail(email);
+    if (!user) {
+      throw new NotFoundError('No account found with this email');
+    }
+
+    const redirectUrl = authRepository.getPasswordResetRedirectUrl();
+    await authRepository.sendPasswordResetEmail(email, redirectUrl);
+
+    logger.info('Password reset email sent', { email, userId: user.id });
+
+    return { message: 'Password reset link sent. Check your inbox.' };
+  },
+
+  async resetPassword(accessToken, newPassword, refreshToken = null) {
+    try {
+      await authRepository.resetPassword(accessToken, newPassword, refreshToken);
+    } catch (error) {
+      const message = error?.message || 'Failed to reset password';
+      if (error?.name === 'RATE_LIMIT') {
+        throw new ValidationError(message);
+      }
+      if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid')) {
+        throw new ValidationError(message);
+      }
+      throw new ValidationError(message);
+    }
+    return { message: 'Password updated successfully. You can now login with your new password.' };
+  },
+
+  async resendVerification(email) {
+    const user = await userRepository.findByEmail(email);
+    if (!user) {
+      throw new ValidationError('No account found with this email');
+    }
+
+    if (user.is_email_verified) {
+      throw new ValidationError('Email already verified. Please login.');
+    }
+
+    await authRepository.resendVerificationEmail(email);
+
+    logger.info('Verification email resent', { email, userId: user.id });
+
+    return { message: 'Verification email resent. Please check your inbox.' };
+  },
+
+  async logout(token) {
+    await authRepository.signOut(token);
+    logger.info('User logged out');
+    return true;
+  },
+
+  async getCurrentUser(userId) {
     const dbUser = await userRepository.findById(userId);
-    
     if (!dbUser) {
       throw new UnauthorizedError('User not found');
     }
@@ -97,13 +226,10 @@ export const authService = {
       case 'admin':
         profile = await userRepository.findAdminProfile(userId);
         break;
+      default:
+        break;
     }
 
-    return createAuthSession(dbUser, profile);
-  },
-
-  logout() {
-    logger.info('User logged out');
-    return true;
+    return createAuthSession(dbUser, profile, SESSION_DURATION_DEFAULT_MS);
   },
 };

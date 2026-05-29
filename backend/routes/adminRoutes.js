@@ -7,6 +7,7 @@ import {
   linkPublisherProfile,
   listUsers,
   reviewBook,
+  reviewBookFormat,
 } from '../controllers/adminController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import {
@@ -29,5 +30,6 @@ router.post('/publishers', validate(publisherProfileSchema), createPublisherProf
 router.patch('/authors/:id/link-user', validate(linkManagedProfileSchema), linkAuthorProfile);
 router.patch('/publishers/:id/link-user', validate(linkManagedProfileSchema), linkPublisherProfile);
 router.patch('/books/:id/review', validate(bookReviewStatusSchema), reviewBook);
+router.patch('/books/:bookId/formats/:formatId/review', validate(bookReviewStatusSchema), reviewBookFormat);
 
 export default router;

@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 
 // Import routes
+import authRoutes from './routes/authRoutes.js'; 
 import userRoutes from './routes/userRoutes.js';
 import bookRoutes from './routes/bookRoutes.js';
 import wishlistRoutes from './routes/wishlistRoutes.js';
@@ -88,13 +89,13 @@ app.use(
 // Logging middleware
 app.use(morgan('dev'));
 
+// Webhook routes must be BEFORE express.json() so Chapa HMAC gets the raw body
+app.use('/api/webhooks', webhookRoutes);
+
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-
-// ✅ FIX 4: Webhook routes must be BEFORE express.json()
-app.use('/api/webhooks', webhookRoutes);
 
 // Debug routes (optional, remove in production)
 app.get('/api/routes', (req, res) => {
@@ -115,7 +116,8 @@ app.get('/api/routes', (req, res) => {
 });
 
 // ✅ FIX 5: Mount all API routes
-app.use('/api/auth', userRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/analytics', analyticsRoutes);
@@ -176,7 +178,7 @@ app.use((err, req, res, next) => {
     errorCode = 'NOT_FOUND';
   } else if (err.name === 'ConflictError') {
     statusCode = 409;
-    errorCode = 'CONFLICT';
+    errorCode = err.errorCode || 'DUPLICATE_BOOK';
   }
   
   res.status(statusCode).json({ 
@@ -184,7 +186,9 @@ app.use((err, req, res, next) => {
     error: {
       message: errorMessage,
       code: errorCode,
+      ...(err.existingBookId && { existingBookId: err.existingBookId }),
       ...(err.errors && { details: err.errors }),
+      ...(err.details && { details: err.details }),
       ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     }
   });

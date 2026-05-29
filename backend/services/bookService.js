@@ -1,5 +1,6 @@
 import { bookRepository } from '../repositories/bookRepository.js';
-import { ValidationError ,ForbiddenError, NotFoundError} from '../utils/errors.js';
+import { userRepository } from '../repositories/userRepository.js';
+import { ValidationError, ForbiddenError, NotFoundError, ConflictError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 
@@ -84,12 +85,13 @@ async createBook(bookData, userId, userRole) {
   if (!bookData.title) throw new ValidationError('Title is required');
   if (!bookData.language) throw new ValidationError('Language is required');
   if (!bookData.genre_id) throw new ValidationError('Genre is required');
-  if (!bookData.formats || bookData.formats.length === 0) {
+  const isDraft = (bookData.status || 'draft') === 'draft';
+  if (!isDraft && (!bookData.formats || bookData.formats.length === 0)) {
     throw new ValidationError('At least one format (PDF or Audio) is required');
   }
 
   // Validate formats
-  for (const format of bookData.formats) {
+  for (const format of bookData.formats || []) {
     if (format.price === undefined || format.price < 0) {
       throw new ValidationError(`Price is required for ${format.format_type} format`);
     }
@@ -104,17 +106,26 @@ async createBook(bookData, userId, userRole) {
     }
   }
 
-  const { book, error } = await bookRepository.createBook(
+  const { book, error, conflict, existingBookId } = await bookRepository.createBook(
     bookData,
-    bookData.formats,
+    bookData.formats || [],
     userId,
     userRole
   );
 
+  if (conflict) throw new ConflictError(error, existingBookId || undefined);
   if (error) throw new Error(error);
 
   logger.info('Book created successfully', { bookId: book.id, userId, userRole });
 
+  return book;
+},
+
+async submitBookForReview(bookId, userId) {
+  const { book, error } = await bookRepository.submitForReview(bookId, userId);
+  if (error === 'Book not found') throw new NotFoundError('Book');
+  if (error === 'You do not have permission to submit this book') throw new ForbiddenError(error);
+  if (error) throw new ValidationError(error);
   return book;
 },
 
@@ -132,7 +143,8 @@ async createBook(bookData, userId, userRole) {
     search: validatedSearch,
     page: validatedPage,
     limit: validatedLimit,
-    userId,
+    // Marketplace listing should only show approved books, even when logged in.
+    userId: null,
   });
 
   if (result.error) {
@@ -151,6 +163,35 @@ async createBook(bookData, userId, userRole) {
     },
   };
 },
+
+  async getPersonalizedBooks(userId, limit = 6) {
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    const validatedLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 6));
+    const favoriteGenres = await userRepository.findFavoriteGenres(userId);
+    const genreIds = favoriteGenres.map((g) => g.id).filter(Boolean);
+
+    if (!genreIds.length) {
+      return { books: [], meta: { personalized: false } };
+    }
+
+    const result = await bookRepository.findPersonalized({
+      genreIds,
+      limit: validatedLimit,
+    });
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return {
+      books: result.books,
+      meta: { personalized: result.books.length > 0 },
+    };
+  },
+
 /**
  * Get book by ID - PUBLIC ACCESS for approved books
  */
@@ -176,6 +217,15 @@ async getBookById(bookId, userId = null) {
     }
 
     return genres;
+  },
+
+  async getLanguages() {
+    const { languages, error } = await bookRepository.findDistinctLanguages();
+    if (error) throw new Error(error);
+
+    const unique = Array.from(new Set(languages || []));
+    unique.sort((a, b) => a.localeCompare(b));
+    return unique;
   },
 
   /**
@@ -204,7 +254,7 @@ async getBookById(bookId, userId = null) {
       throw new ValidationError('No valid fields to update');
     }
 
-    const { book, error } = await bookRepository.updateBook(bookId, userId, allowedUpdates);
+    const { book, error, conflict } = await bookRepository.updateBook(bookId, userId, allowedUpdates);
 
     if (error === 'Book not found') {
       throw new NotFoundError('Book');
@@ -212,6 +262,7 @@ async getBookById(bookId, userId = null) {
     if (error === 'You do not have permission to update this book') {
       throw new ForbiddenError(error);
     }
+    if (conflict) throw new ConflictError(error);
     if (error) {
       throw new Error(error);
     }
@@ -222,7 +273,7 @@ async getBookById(bookId, userId = null) {
   },
 
   /**
-   * Delete (soft delete) a book
+   * Permanently delete a book and its storage files
    */
   async deleteBook(bookId, userId) {
     if (!bookId) {
@@ -306,6 +357,38 @@ async getBookById(bookId, userId = null) {
     logger.info('Book cover updated', { bookId, userId });
 
     return true;
+  },
+
+  async getBookForEdit(bookId, userId) {
+    if (!bookId) throw new ValidationError('Book ID is required');
+    const { book, error } = await bookRepository.findByIdForOwner(bookId, userId);
+    if (error === 'Book not found') throw new NotFoundError('Book');
+    if (error === 'You do not have permission to view this book') throw new ForbiddenError(error);
+    if (error || !book) throw new NotFoundError('Book');
+    return book;
+  },
+
+  async addBookFormat(bookId, userId, formatRow) {
+    const { format, error } = await bookRepository.addBookFormat(bookId, userId, formatRow);
+    if (error === 'Book not found') throw new NotFoundError('Book');
+    if (error?.includes('permission')) throw new ForbiddenError(error);
+    if (error?.includes('already has')) throw new ConflictError(error);
+    if (error) throw new ValidationError(error);
+    return format;
+  },
+
+  async updateBookFromUpload(bookId, userId, bookUpdates, formatUpdates) {
+    const { book, error, conflict } = await bookRepository.updateBookFromUpload(
+      bookId,
+      userId,
+      bookUpdates,
+      formatUpdates
+    );
+    if (error === 'Book not found') throw new NotFoundError('Book');
+    if (error?.includes('permission')) throw new ForbiddenError(error);
+    if (conflict) throw new ConflictError(error);
+    if (error) throw new Error(error);
+    return book;
   },
 
 };
