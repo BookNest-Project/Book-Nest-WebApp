@@ -43,32 +43,22 @@ export const checkoutController = {
   },
 
   /**
-   * Verify payment manually (fallback if webhook fails or polling)
+   * Verify payment with Chapa and fulfill purchases (webhook fallback).
    * GET /api/checkout/verify?tx_ref=xxx
    */
   async verifyPayment(req, res, next) {
     try {
-      const { tx_ref } = req.query;
+      const tx_ref = req.query.tx_ref || req.query.trx_ref || req.query.trxref;
 
       if (!tx_ref) {
         return res.status(400).json({ success: false, error: { message: 'tx_ref required' } });
       }
 
-      const { data: transaction, error } = await supabaseAdmin
-        .from('transactions')
-        .select('id, status')
-        .eq('payment_id', tx_ref)
-        .single();
-
-      if (error || !transaction) {
-        return res.status(200).json({ success: true, data: { verified: false } });
-      }
-
-      const verified = transaction.status === 'completed';
+      const result = await checkoutService.verifyAndFulfillPayment(String(tx_ref));
 
       res.status(200).json({
         success: true,
-        data: { verified, already_processed: verified },
+        data: result,
       });
     } catch (error) {
       logger.error('Verify error', { error: error.message });

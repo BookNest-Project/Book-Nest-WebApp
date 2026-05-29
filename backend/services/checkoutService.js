@@ -313,4 +313,87 @@ export const checkoutService = {
       });
     }
   },
+
+  /**
+   * Find transaction by Chapa tx_ref (exact or embedded TXN number).
+   */
+  async findTransactionByTxRef(tx_ref) {
+    if (!tx_ref) return null;
+
+    const { data: exact } = await supabaseAdmin
+      .from('transactions')
+      .select('id, user_id, book_format_id, status, payment_id, transaction_number')
+      .eq('payment_id', tx_ref)
+      .maybeSingle();
+
+    if (exact) return exact;
+
+    const txnMatch = String(tx_ref).match(/TXN-[A-Z0-9-]+/i);
+    if (txnMatch) {
+      const { data: byNumber } = await supabaseAdmin
+        .from('transactions')
+        .select('id, user_id, book_format_id, status, payment_id, transaction_number')
+        .eq('transaction_number', txnMatch[0])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (byNumber) return byNumber;
+    }
+
+    const { data: recent } = await supabaseAdmin
+      .from('transactions')
+      .select('id, user_id, book_format_id, status, payment_id, transaction_number')
+      .ilike('payment_id', `%${tx_ref}%`)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    return recent?.[0] ?? null;
+  },
+
+  /**
+   * Verify with Chapa and fulfill (fallback when webhook is delayed or missed).
+   */
+  async verifyAndFulfillPayment(tx_ref) {
+    const transaction = await this.findTransactionByTxRef(tx_ref);
+
+    if (!transaction) {
+      logger.warn('Verify: transaction not found', { tx_ref });
+      return { verified: false, already_processed: false };
+    }
+
+    if (transaction.status === 'completed') {
+      return { verified: true, already_processed: true };
+    }
+
+    const chapaRef = transaction.payment_id || tx_ref;
+    const { verified, error } = await chapaService.verifyPayment(chapaRef);
+
+    if (!verified) {
+      logger.warn('Verify: Chapa payment not confirmed', { tx_ref, chapaRef, error });
+      return { verified: false, already_processed: false };
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('transactions')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', transaction.id);
+
+    if (updateError) {
+      logger.error('Verify: failed to update transaction', { error: updateError.message });
+      throw updateError;
+    }
+
+    await this.fulfillTransaction(transaction);
+
+    logger.info('Payment verified and fulfilled via API', {
+      transactionId: transaction.id,
+      tx_ref,
+    });
+
+    return { verified: true, already_processed: false };
+  },
 };

@@ -58,34 +58,30 @@ export const webhookController = {
       });
 
       const { event, tx_ref, reference, status, amount, currency } = body;
+      const paymentRef = tx_ref || reference || body.data?.tx_ref;
 
-      // Only process charge.success events
-      if (event !== 'charge.success') {
-        logger.info('Ignoring non-success event', { event });
+      const isSuccessEvent =
+        event === 'charge.success' ||
+        event === 'payment.success' ||
+        status === 'success' ||
+        body.data?.status === 'success';
+
+      if (!isSuccessEvent) {
+        logger.info('Ignoring non-success event', { event, status });
         return res.status(200).json({ received: true });
       }
 
-      if (!tx_ref || status !== 'success') {
-        logger.warn('Invalid webhook data', { tx_ref, status });
+      if (!paymentRef) {
+        logger.warn('Invalid webhook data: missing tx_ref', { body });
         return res.status(200).json({ received: true });
       }
 
-      logger.info('Processing successful payment', { tx_ref, reference, amount });
+      logger.info('Processing successful payment', { paymentRef, reference, amount });
 
-      // Find transaction by payment_id (tx_ref)
-      const { data: transaction, error: findError } = await supabaseAdmin
-        .from('transactions')
-        .select('id, user_id, book_format_id, status')
-        .eq('payment_id', tx_ref)
-        .single();
-
-      if (findError) {
-        logger.error('Transaction find error', { tx_ref, error: findError.message });
-        return res.status(200).json({ received: true });
-      }
+      const transaction = await checkoutService.findTransactionByTxRef(paymentRef);
 
       if (!transaction) {
-        logger.error('Transaction not found', { tx_ref });
+        logger.error('Transaction not found', { paymentRef });
         return res.status(200).json({ received: true });
       }
 
@@ -102,7 +98,7 @@ export const webhookController = {
         .from('transactions')
         .update({
           status: 'completed',
-          payment_id: reference || tx_ref,
+          payment_id: reference || paymentRef,
           completed_at: new Date().toISOString(),
         })
         .eq('id', transaction.id);

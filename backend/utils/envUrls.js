@@ -55,7 +55,14 @@ export function getBackendUrl() {
 export function getFrontendUrl() {
   const url = pickFirstUrl([process.env.FRONTEND_URL]);
 
-  if (url) return url;
+  if (url) {
+    if (/-git-|_[a-z0-9]{6,}\.vercel\.app$/i.test(new URL(url).hostname)) {
+      console.warn(
+        '⚠️ FRONTEND_URL looks like a Vercel preview deployment. Use your production URL (e.g. https://your-app.vercel.app) or Chapa will redirect to DEPLOYMENT_NOT_FOUND.'
+      );
+    }
+    return url;
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     return 'http://localhost:3000';
