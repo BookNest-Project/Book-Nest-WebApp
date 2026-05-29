@@ -17,6 +17,21 @@ console.log('✅ Supabase URL:', process.env.SUPABASE_URL);
 console.log('✅ Anon Key present:', process.env.SUPABASE_ANON_KEY ? 'Yes' : 'No');
 console.log('✅ Service Role Key present:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Yes' : 'No');
 
+try {
+  const payload = JSON.parse(
+    Buffer.from(process.env.SUPABASE_SERVICE_ROLE_KEY.split('.')[1], 'base64url').toString()
+  );
+  if (payload.role !== 'service_role') {
+    console.error(
+      '❌ SUPABASE_SERVICE_ROLE_KEY is not the service_role key (got role:',
+      payload.role,
+      '). Checkout will fail with "permission denied". Use Settings → API → service_role secret on Railway.'
+    );
+  }
+} catch {
+  console.warn('⚠️ Could not verify SUPABASE_SERVICE_ROLE_KEY JWT payload');
+}
+
 // Create two clients:
 // 1. Service Role client (server-side, bypasses RLS)
 const supabaseAdmin = createClient(
