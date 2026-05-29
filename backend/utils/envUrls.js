@@ -2,6 +2,16 @@
  * Normalize env URLs for Chapa (requires absolute https URLs in production).
  */
 
+const PLACEHOLDER_HOST_PATTERNS = [
+  /^your-vercel-frontend-url/i,
+  /^your-app/i,
+  /^your-vercel/i,
+  /^your-api/i,
+  /^example\.com$/i,
+];
+
+const PREVIEW_HOST_PATTERNS = [/-git-/i, /_[a-z0-9]{6,}\.vercel\.app$/i];
+
 function normalizeBaseUrl(raw) {
   if (!raw || typeof raw !== 'string') return null;
 
@@ -29,6 +39,44 @@ function pickFirstUrl(candidates) {
   return null;
 }
 
+function getHostname(baseUrl) {
+  return new URL(baseUrl).hostname.toLowerCase();
+}
+
+function assertNotPlaceholderHost(baseUrl, envName) {
+  const host = getHostname(baseUrl);
+  const isPlaceholder = PLACEHOLDER_HOST_PATTERNS.some((re) => re.test(host));
+
+  if (!isPlaceholder) return;
+
+  const message =
+    `${envName} is set to a documentation placeholder ("${host}"). ` +
+    'Use your real production URL. For BookNest production set FRONTEND_URL=https://book-nest-frontend-v2-main.vercel.app on Railway.';
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(message);
+  }
+
+  console.warn(`⚠️ ${message}`);
+}
+
+function warnIfPreviewHost(baseUrl, envName) {
+  const host = getHostname(baseUrl);
+  const isPreview = PREVIEW_HOST_PATTERNS.some((re) => re.test(host));
+
+  if (!isPreview) return;
+
+  const message =
+    `${envName} looks like a Vercel preview deployment ("${host}"). ` +
+    'Use your stable production URL or Chapa will redirect to DEPLOYMENT_NOT_FOUND.';
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(message);
+  }
+
+  console.warn(`⚠️ ${message}`);
+}
+
 /** Public API base (Railway / local). Used for Chapa callback_url webhook. */
 export function getBackendUrl() {
   const url = pickFirstUrl([
@@ -39,7 +87,10 @@ export function getBackendUrl() {
       : null,
   ]);
 
-  if (url) return url;
+  if (url) {
+    assertNotPlaceholderHost(url, 'BACKEND_URL');
+    return url;
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     const local = normalizeBaseUrl(`http://localhost:${process.env.PORT || 5000}`);
@@ -56,11 +107,8 @@ export function getFrontendUrl() {
   const url = pickFirstUrl([process.env.FRONTEND_URL]);
 
   if (url) {
-    if (/-git-|_[a-z0-9]{6,}\.vercel\.app$/i.test(new URL(url).hostname)) {
-      console.warn(
-        '⚠️ FRONTEND_URL looks like a Vercel preview deployment. Use your production URL (e.g. https://your-app.vercel.app) or Chapa will redirect to DEPLOYMENT_NOT_FOUND.'
-      );
-    }
+    assertNotPlaceholderHost(url, 'FRONTEND_URL');
+    warnIfPreviewHost(url, 'FRONTEND_URL');
     return url;
   }
 
@@ -69,18 +117,25 @@ export function getFrontendUrl() {
   }
 
   throw new Error(
-    'FRONTEND_URL is missing or invalid. Set it to your Vercel URL, e.g. https://book-nest-frontend-v2-main.vercel.app'
+    'FRONTEND_URL is missing or invalid. Set it to https://book-nest-frontend-v2-main.vercel.app (no trailing slash)'
   );
 }
 
 export function logResolvedUrls(logger) {
   try {
+    const backend = getBackendUrl();
+    const frontend = getFrontendUrl();
+
     logger.info('Resolved public URLs', {
-      backend: getBackendUrl(),
-      frontend: getFrontendUrl(),
-      chapa_callback: `${getBackendUrl()}/api/webhooks/chapa`,
+      backend,
+      frontend,
+      chapa_callback: `${backend}/api/webhooks/chapa`,
+      chapa_return: `${frontend}/checkout/result`,
     });
   } catch (err) {
     logger.error('URL configuration error', { message: err.message });
+    if (process.env.NODE_ENV === 'production') {
+      throw err;
+    }
   }
 }
