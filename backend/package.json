@@ -15,7 +15,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@repo/validation": "file:../../frontend/packages/validation",
     "@supabase/supabase-js": "^2.89.0",
     "axios": "^1.13.4",
     "chapa": "^1.0.5",

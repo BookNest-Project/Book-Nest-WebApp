@@ -9,7 +9,7 @@ BEGIN
     WHERE t.typname = 'book_status' AND e.enumlabel = 'archived'
   ) THEN
     ALTER TYPE public.book_status ADD VALUE 'archived';
-  END IF;
+  END IF; 
 END $$;
 
 -- books.is_active (soft delete)

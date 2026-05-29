@@ -8,4 +8,4 @@ export {
   resetPasswordSchema,
   resendVerificationSchema,
   confirmEmailSchema,
-} from '@repo/validation';
+} from './authSchemas.js';
