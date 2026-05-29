@@ -1,30 +1,59 @@
 import { logger } from '../utils/logger.js';
+import { getBackendUrl, getFrontendUrl } from '../utils/envUrls.js';
 
 const CHAPA_API_URL = 'https://api.chapa.co/v1';
 const CHAPA_SECRET_KEY = process.env.CHAPA_SECRET_KEY;
 
+function formatChapaError(data) {
+  if (!data) return 'Payment initialization failed';
+  if (typeof data.message === 'string') return data.message;
+  if (typeof data.message === 'object' && data.message !== null) {
+    const parts = Object.entries(data.message).flatMap(([field, msgs]) => {
+      const list = Array.isArray(msgs) ? msgs : [msgs];
+      return list.map((m) => `${field}: ${m}`);
+    });
+    if (parts.length) return parts.join('; ');
+  }
+  return data.statusText || JSON.stringify(data);
+}
+
 export const chapaService = {
-  async initializePayment(transaction, user, returnUrl) {
+  async initializePayment(transaction, user) {
     try {
+      if (!CHAPA_SECRET_KEY) {
+        return {
+          checkoutUrl: null,
+          tx_ref: null,
+          error: 'CHAPA_SECRET_KEY is not set on the server',
+        };
+      }
+
+      const frontendUrl = getFrontendUrl();
+      const backendUrl = getBackendUrl();
       const tx_ref = `booknest-${transaction.transaction_number}-${Date.now()}`;
 
       const payload = {
-  amount: transaction.amount,
-  currency: transaction.currency || 'ETB',
-  email: user.email,
-  first_name: user.publicName?.split(' ')[0] || 'Customer',
-  last_name: user.publicName?.split(' ').slice(1).join(' ') || 'User',
-  tx_ref: tx_ref,
-  return_url: `${process.env.FRONTEND_URL}/checkout/result?tx_ref=${tx_ref}`,
-  callback_url: `${process.env.BACKEND_URL}/api/webhooks/chapa`,
-};
+        amount: transaction.amount,
+        currency: transaction.currency || 'ETB',
+        email: user.email,
+        first_name: user.publicName?.split(' ')[0] || 'Customer',
+        last_name: user.publicName?.split(' ').slice(1).join(' ') || 'User',
+        tx_ref,
+        return_url: `${frontendUrl}/checkout/result?tx_ref=${encodeURIComponent(tx_ref)}`,
+        callback_url: `${backendUrl}/api/webhooks/chapa`,
+      };
 
-      logger.info('Chapa payment request', { tx_ref, amount: transaction.amount });
+      logger.info('Chapa payment request', {
+        tx_ref,
+        amount: transaction.amount,
+        callback_url: payload.callback_url,
+        return_url: payload.return_url,
+      });
 
       const response = await fetch(`${CHAPA_API_URL}/transaction/initialize`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${CHAPA_SECRET_KEY}`,
+          Authorization: `Bearer ${CHAPA_SECRET_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -34,7 +63,11 @@ export const chapaService = {
 
       if (!response.ok || data.status !== 'success') {
         logger.error('Chapa initialization error', { error: data });
-        return { checkoutUrl: null, tx_ref: null, error: data.message || 'Payment initialization failed' };
+        return {
+          checkoutUrl: null,
+          tx_ref: null,
+          error: formatChapaError(data),
+        };
       }
 
       return { checkoutUrl: data.data.checkout_url, tx_ref, error: null };
@@ -49,7 +82,7 @@ export const chapaService = {
       const response = await fetch(`${CHAPA_API_URL}/transaction/verify/${tx_ref}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${CHAPA_SECRET_KEY}`,
+          Authorization: `Bearer ${CHAPA_SECRET_KEY}`,
         },
       });
 

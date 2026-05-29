@@ -90,13 +90,9 @@ async function createTransactionWithItems(userId, lineItems) {
 }
 
 async function attachPaymentAndReturn(user, transaction, transactionNumber, totalAmount) {
-  const { checkoutUrl, tx_ref, error } = await chapaService.initializePayment(
-    transaction,
-    user,
-    `${process.env.FRONTEND_URL}/checkout/result`
-  );
+  const { checkoutUrl, tx_ref, error } = await chapaService.initializePayment(transaction, user);
 
-  if (error) throw new Error(error);
+  if (error) throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
 
   const { error: updateError } = await supabaseAdmin
     .from('transactions')

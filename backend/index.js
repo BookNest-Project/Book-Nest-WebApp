@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
+import { logResolvedUrls } from './utils/envUrls.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -32,6 +33,7 @@ import feedRoutes from './routes/feedRoutes.js';
 import publicRoute from './routes/publicRoutes.js'
 // Load environment variables
 dotenv.config();
+logResolvedUrls(logger);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
