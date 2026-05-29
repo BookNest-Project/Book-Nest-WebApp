@@ -1,6 +1,7 @@
 // backend/services/authService.js
 import { userRepository } from '../repositories/userRepository.js';
 import { authRepository } from '../repositories/authRepository.js';
+import { supabaseAdmin } from '../config/supabase.js';
 import { UnauthorizedError, ValidationError, ForbiddenError, NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -228,6 +229,37 @@ export const authService = {
         break;
       default:
         break;
+    }
+
+    // Fallback: older accounts might not have a profile row yet, but Supabase Auth metadata does.
+    // Use it so the UI doesn't show the email prefix as the "name".
+    if (
+      !profile ||
+      (dbUser.role === 'reader' && !profile.display_name) ||
+      (dbUser.role === 'author' && !profile.pen_name) ||
+      (dbUser.role === 'publisher' && !profile.company_name) ||
+      (dbUser.role === 'admin' && !profile.display_name)
+    ) {
+      try {
+        const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (!error && data?.user) {
+          const meta = data.user.user_metadata || {};
+          if (dbUser.role === 'reader' && meta.display_name) {
+            profile = { ...(profile || {}), display_name: meta.display_name };
+          }
+          if (dbUser.role === 'author' && (meta.pen_name || meta.display_name)) {
+            profile = { ...(profile || {}), pen_name: meta.pen_name || meta.display_name };
+          }
+          if (dbUser.role === 'publisher' && (meta.company_name || meta.display_name)) {
+            profile = { ...(profile || {}), company_name: meta.company_name || meta.display_name };
+          }
+          if (dbUser.role === 'admin' && meta.display_name) {
+            profile = { ...(profile || {}), display_name: meta.display_name };
+          }
+        }
+      } catch (err) {
+        logger.warn('Auth metadata fallback failed', { userId, error: err?.message });
+      }
     }
 
     return createAuthSession(dbUser, profile, SESSION_DURATION_DEFAULT_MS);

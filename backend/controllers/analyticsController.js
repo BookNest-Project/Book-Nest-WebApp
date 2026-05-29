@@ -20,9 +20,33 @@ export const analyticsController = {
         });
       }
 
-      const analytics = await analyticsService.getSalesAnalytics(userId, userRole);
+      const analytics = await analyticsService.getSalesAnalytics(userId);
 
       res.status(200).json(formatSuccess(analytics, 'Sales analytics retrieved successfully'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getSalesReport(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const userRole = req.user.role;
+
+      if (userRole !== 'author' && userRole !== 'publisher') {
+        return res.status(403).json({
+          success: false,
+          error: { message: 'Only authors and publishers can view sales reports' },
+        });
+      }
+
+      const report = await analyticsService.getSalesReport(
+        userId,
+        req.query.from,
+        req.query.to
+      );
+
+      res.status(200).json(formatSuccess(report, 'Sales report retrieved'));
     } catch (error) {
       next(error);
     }

@@ -1,5 +1,6 @@
 import express from 'express';
 import { bookController } from '../controllers/bookController.js';
+import { reviewController } from '../controllers/reviewController.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -27,6 +28,10 @@ router.put('/:id', authenticate, bookController.updateBook);
 router.delete('/:id', authenticate, bookController.deleteBook);
 router.put('/:id/cover', authenticate, bookController.updateBookCover); 
 router.get('/formats/:id', authenticate, bookController.getBookFormatById);
+
+router.get('/:id/reviews', reviewController.listReviews);
+router.get('/:id/reviews/can', authenticate, reviewController.canReview);
+router.post('/:id/reviews', authenticate, reviewController.createReview);
 
 router.get('/:id', bookController.getBookById);
 

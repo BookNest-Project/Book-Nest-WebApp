@@ -8,5 +8,6 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/sales', analyticsController.getSalesAnalytics);
+router.get('/sales/report', analyticsController.getSalesReport);
 
 export default router;

@@ -2,17 +2,14 @@
 import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
-
-function getFrontendBaseUrl() {
-  return (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
-}
+import { getFrontendUrl } from '../utils/envUrls.js';
 
 function getEmailVerificationRedirectUrl() {
-  return `${getFrontendBaseUrl()}/verify`;
+  return `${getFrontendUrl()}/auth/verify`;
 }
 
 function getPasswordResetRedirectUrl() {
-  return `${getFrontendBaseUrl()}/reset-password`;
+  return `${getFrontendUrl()}/reset-password`;
 }
 
 function mapSupabaseAuthError(error) {
@@ -234,9 +231,10 @@ export const authRepository = {
    * Get user from token
    */
   async getUserFromToken(token) {
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
     if (error || !user) {
+      logger.warn('getUserFromToken failed', { error: error?.message });
       return null;
     }
 

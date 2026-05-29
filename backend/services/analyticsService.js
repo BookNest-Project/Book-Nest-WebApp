@@ -3,18 +3,14 @@ import { ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 export const analyticsService = {
-  async getSalesAnalytics(userId, userRole) {
+  async getSalesAnalytics(userId) {
     if (!userId) {
       throw new ValidationError('User ID is required');
     }
 
-    const result = await analyticsRepository.getSalesSummary(userId, userRole);
+    const result = await analyticsRepository.getSalesSummary(userId);
 
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    logger.info('Sales analytics retrieved', { userId, userRole });
+    logger.info('Sales analytics retrieved', { userId });
 
     return {
       summary: {
@@ -25,6 +21,11 @@ export const analyticsService = {
       },
       sales_over_time: result.sales_over_time,
       top_books: result.top_books,
+      wallet: result.wallet,
     };
+  },
+
+  async getSalesReport(userId, from, to) {
+    return analyticsRepository.getSalesReport(userId, from, to);
   },
 };

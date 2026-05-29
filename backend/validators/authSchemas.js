@@ -22,9 +22,10 @@ export const displayNameSchema = z
   .trim()
   .min(2, 'Display name must be at least 2 characters')
   .max(80, 'Display name must be less than 80 characters')
+  .regex(/^[a-zA-Z]/, 'Display name must start with a letter')
   .regex(
-    /^[a-zA-Z0-9\s\-'_]+$/,
-    'Use letters, numbers, spaces, hyphens, apostrophes, or underscores'
+    /^[a-zA-Z][a-zA-Z0-9\s\-'_]*$/,
+    'After the first letter, use only letters, numbers, spaces, hyphens, apostrophes, or underscores'
   )
   .refine((val) => !/\s{2,}/.test(val), 'Use single spaces only (no double spaces)');
 

@@ -1,14 +1,16 @@
 import express from 'express';
 import { sellerController } from '../controllers/sellerController.js';
+import { sellerFinanceController } from '../controllers/sellerFinanceController.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Public profile (no auth required)
-router.get('/:userId', sellerController.getSellerProfile);
+router.get('/wallet', authenticate, sellerFinanceController.getWallet);
+router.get('/earnings', authenticate, sellerFinanceController.getEarnings);
+router.get('/withdrawals', authenticate, sellerFinanceController.getWithdrawals);
+router.post('/withdrawals', authenticate, sellerFinanceController.requestWithdrawal);
 
-// If you want protected version for private profiles, add with middleware
-// router.use(authenticate);
-// router.get('/private/:userId', sellerController.getPrivateSellerProfile);
+// Public seller profile
+router.get('/:userId', sellerController.getSellerProfile);
 
 export default router;
