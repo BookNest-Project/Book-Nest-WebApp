@@ -315,25 +315,36 @@ export const checkoutService = {
   },
 
   /**
-   * Find transaction by Chapa tx_ref (exact or embedded TXN number).
+   * Parse our Chapa tx_ref: booknest-{transaction_number}-{timestamp}
+   */
+  parseBooknestTxRef(tx_ref) {
+    const raw = String(tx_ref).replace(/^booknest-/i, '');
+    const txnNumber = raw.replace(/-\d{10,}$/, '');
+    return { raw, txnNumber };
+  },
+
+  /**
+   * Find transaction by Chapa tx_ref (exact, booknest prefix, or transaction_number).
    */
   async findTransactionByTxRef(tx_ref) {
     if (!tx_ref) return null;
 
+    const ref = String(tx_ref);
+    const { txnNumber } = this.parseBooknestTxRef(ref);
+
     const { data: exact } = await supabaseAdmin
       .from('transactions')
       .select('id, user_id, book_format_id, status, payment_id, transaction_number')
-      .eq('payment_id', tx_ref)
+      .eq('payment_id', ref)
       .maybeSingle();
 
     if (exact) return exact;
 
-    const txnMatch = String(tx_ref).match(/TXN-[A-Z0-9-]+/i);
-    if (txnMatch) {
+    if (txnNumber) {
       const { data: byNumber } = await supabaseAdmin
         .from('transactions')
         .select('id, user_id, book_format_id, status, payment_id, transaction_number')
-        .eq('transaction_number', txnMatch[0])
+        .eq('transaction_number', txnNumber)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -341,20 +352,31 @@ export const checkoutService = {
       if (byNumber) return byNumber;
     }
 
+    const searchKey = txnNumber || ref.replace(/^booknest-/i, '');
     const { data: recent } = await supabaseAdmin
       .from('transactions')
       .select('id, user_id, book_format_id, status, payment_id, transaction_number')
-      .ilike('payment_id', `%${tx_ref}%`)
+      .ilike('payment_id', `%${searchKey}%`)
       .order('created_at', { ascending: false })
       .limit(1);
 
     return recent?.[0] ?? null;
   },
 
+  async hasPurchasesForTransaction(transactionId) {
+    const { count, error } = await supabaseAdmin
+      .from('user_purchases')
+      .select('id', { count: 'exact', head: true })
+      .eq('transaction_id', transactionId);
+
+    if (error) return false;
+    return (count ?? 0) > 0;
+  },
+
   /**
    * Verify with Chapa and fulfill (fallback when webhook is delayed or missed).
    */
-  async verifyAndFulfillPayment(tx_ref) {
+  async verifyAndFulfillPayment(tx_ref, userId) {
     const transaction = await this.findTransactionByTxRef(tx_ref);
 
     if (!transaction) {
@@ -362,11 +384,23 @@ export const checkoutService = {
       return { verified: false, already_processed: false };
     }
 
+    if (userId && transaction.user_id !== userId) {
+      logger.warn('Verify: transaction belongs to another user', { tx_ref, userId });
+      return { verified: false, already_processed: false };
+    }
+
     if (transaction.status === 'completed') {
       return { verified: true, already_processed: true };
     }
 
-    const chapaRef = transaction.payment_id || tx_ref;
+    const fulfilled = await this.hasPurchasesForTransaction(transaction.id);
+    if (fulfilled) {
+      return { verified: true, already_processed: true };
+    }
+
+    const chapaRef = transaction.payment_id?.startsWith('booknest-')
+      ? transaction.payment_id
+      : tx_ref;
     const { verified, error } = await chapaService.verifyPayment(chapaRef);
 
     if (!verified) {

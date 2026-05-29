@@ -54,7 +54,10 @@ export const checkoutController = {
         return res.status(400).json({ success: false, error: { message: 'tx_ref required' } });
       }
 
-      const result = await checkoutService.verifyAndFulfillPayment(String(tx_ref));
+      const result = await checkoutService.verifyAndFulfillPayment(
+        String(tx_ref),
+        req.user.id
+      );
 
       res.status(200).json({
         success: true,
