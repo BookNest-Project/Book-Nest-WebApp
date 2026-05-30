@@ -15,12 +15,23 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
 } from '../controllers/adminApproval.js';
-import { getUserStats, listUsers, exportUsers, getUserDetail, banUser, approveUser, updateUserStatus } from '../controllers/adminUser.js';
+import { getUserStats, listUsers, exportUsers, getUserDetail, banUser, approveUser, updateUserStatus, bulkUploadUsers } from '../controllers/adminUser.js';
+import {
+  getInvitationTemplates,
+  previewInvitation,
+  listInvitations,
+  getInvitation,
+  createInvitation,
+  sendInvitation,
+  resendInvitation,
+  deleteInvitation,
+  updateInvitation,
+} from '../controllers/adminInvitation.js';
 import { getReportsCenter } from '../controllers/adminReports.js';
 import { getDashboardOverview } from '../controllers/adminDashboard.js';
 import { uploadAdminAvatar, updateAdminProfile } from '../controllers/adminProfile.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
-import { validate, bookReviewStatusSchema } from '../middleware/validation.js';
+import { validate, bookReviewStatusSchema, invitationCreateSchema, invitationPreviewSchema, invitationUpdateSchema } from '../middleware/validation.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -47,6 +58,9 @@ router.get('/', (req, res) => {
         userStats: 'GET /api/admin/users/stats',
         listUsers: 'GET /api/admin/users',
         exportUsers: 'GET /api/admin/users/export',
+        bulkUploadUsers: 'POST /api/admin/users/bulk',
+        invitations: 'GET /api/admin/invitations',
+        invitationTemplates: 'GET /api/admin/invitations/templates',
         userDetail: 'GET /api/admin/users/:id',
         banUser: 'POST /api/admin/users/:id/ban',
         approveUser: 'POST /api/admin/users/:id/approve',
@@ -72,6 +86,16 @@ router.patch('/profile', updateAdminProfile);
 router.post('/profile/name', updateAdminProfile);
 router.get('/users/stats', getUserStats);
 router.get('/users/export', exportUsers);
+router.post('/users/bulk', bulkUploadUsers);
+router.get('/invitations/templates', getInvitationTemplates);
+router.post('/invitations/preview', validate(invitationPreviewSchema), previewInvitation);
+router.get('/invitations', listInvitations);
+router.post('/invitations', validate(invitationCreateSchema), createInvitation);
+router.get('/invitations/:id', getInvitation);
+router.patch('/invitations/:id', validate(invitationUpdateSchema), updateInvitation);
+router.post('/invitations/:id/send', sendInvitation);
+router.post('/invitations/:id/resend', resendInvitation);
+router.delete('/invitations/:id', deleteInvitation);
 router.get('/users/:id', getUserDetail);
 router.post('/users/:id/ban', banUser);
 router.post('/users/:id/approve', approveUser);

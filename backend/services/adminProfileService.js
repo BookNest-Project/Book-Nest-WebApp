@@ -6,14 +6,6 @@ import { userRepository } from '../repositories/userRepository.js';
 import { ForbiddenError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
-function displayNameFromUser(dbUser, existingProfile) {
-  if (existingProfile?.display_name?.trim()) {
-    return existingProfile.display_name.trim();
-  }
-  const fromEmail = dbUser.email?.split('@')[0]?.replace(/[._]/g, ' ') || '';
-  return fromEmail.length >= 2 ? fromEmail.slice(0, 80) : 'Admin User';
-}
-
 async function saveAvatarToAuthMetadata(userId, avatarUrl) {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (error) {
@@ -35,25 +27,31 @@ async function saveAvatarToAuthMetadata(userId, avatarUrl) {
   }
 }
 
-async function saveDisplayNameToAuthMetadata(userId, displayName) {
+async function saveProfileToAuthMetadata(userId, { displayName, bio }) {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (error) {
     logger.error('Auth user fetch failed', { userId, error: error.message });
-    throw new Error('Failed to update display name');
+    throw new Error('Failed to update profile');
   }
 
   const meta = data?.user?.user_metadata || {};
+  const nextMeta = { ...meta };
+
+  if (displayName !== undefined) {
+    nextMeta.display_name = displayName;
+    nextMeta.displayName = displayName;
+  }
+  if (bio !== undefined) {
+    nextMeta.bio = bio || null;
+  }
+
   const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-    user_metadata: {
-      ...meta,
-      display_name: displayName,
-      displayName,
-    },
+    user_metadata: nextMeta,
   });
 
   if (updateError) {
-    logger.error('Auth metadata display name update failed', { userId, error: updateError.message });
-    throw new Error('Failed to save display name');
+    logger.error('Auth metadata profile update failed', { userId, error: updateError.message });
+    throw new Error('Failed to save profile');
   }
 }
 
@@ -66,6 +64,15 @@ function normalizeDisplayName(value) {
     throw new ValidationError('Display name must be 80 characters or less');
   }
   return trimmed;
+}
+
+function normalizeBio(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  if (trimmed.length > 1000) {
+    throw new ValidationError('Bio must be 1000 characters or less');
+  }
+  return trimmed.length ? trimmed : null;
 }
 
 export const adminProfileService = {
@@ -105,6 +112,10 @@ export const adminProfileService = {
   },
 
   async updateDisplayName(userId, displayName) {
+    return this.updateProfile(userId, { displayName });
+  },
+
+  async updateProfile(userId, { displayName, bio }) {
     const dbUser = await userRepository.findById(userId);
     if (!dbUser) {
       throw new NotFoundError('User');
@@ -113,21 +124,50 @@ export const adminProfileService = {
       throw new ForbiddenError('Only admin accounts can update admin profiles');
     }
 
-    const safeName = normalizeDisplayName(displayName);
+    const hasName = displayName !== undefined && displayName !== null;
+    const hasBio = bio !== undefined;
 
-    await saveDisplayNameToAuthMetadata(userId, safeName);
+    if (!hasName && !hasBio) {
+      throw new ValidationError('Nothing to update');
+    }
 
-    try {
-      await adminProfileRepository.upsertDisplayName(userId, safeName);
-    } catch (profileError) {
-      logger.warn('admin_profiles display name upsert skipped', {
-        userId,
-        error: profileError.message,
-      });
+    const safeName = hasName ? normalizeDisplayName(displayName) : undefined;
+    const safeBio = hasBio ? normalizeBio(bio) : undefined;
+
+    await saveProfileToAuthMetadata(userId, {
+      displayName: safeName,
+      bio: safeBio,
+    });
+
+    const existing = await adminProfileRepository.findByUserId(userId);
+    if (existing) {
+      try {
+        await adminProfileRepository.updateProfile(userId, {
+          displayName: safeName,
+          bio: safeBio,
+        });
+      } catch (profileError) {
+        if (safeName && safeBio !== undefined) {
+          try {
+            await adminProfileRepository.updateProfile(userId, { displayName: safeName });
+          } catch (nameOnlyError) {
+            logger.warn('admin_profiles profile sync skipped', {
+              userId,
+              error: nameOnlyError.message,
+            });
+          }
+        } else {
+          logger.warn('admin_profiles profile sync skipped', {
+            userId,
+            error: profileError.message,
+          });
+        }
+      }
     }
 
     const session = await authService.getUserSession(userId);
-    session.user.publicName = safeName;
+    if (safeName) session.user.publicName = safeName;
+    if (safeBio !== undefined) session.user.bio = safeBio;
     return session;
   },
 };

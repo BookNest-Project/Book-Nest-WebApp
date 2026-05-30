@@ -28,10 +28,19 @@ export const updateAdminProfile = async (req, res, next) => {
   try {
     const body = req.body || {};
     const rawName = body.displayName ?? body.display_name;
-    if (rawName === undefined || rawName === null || String(rawName).trim() === '') {
-      throw new ValidationError('Display name is required');
+    const rawBio = body.bio;
+
+    const hasName = rawName !== undefined && rawName !== null && String(rawName).trim() !== '';
+    const hasBio = rawBio !== undefined;
+
+    if (!hasName && !hasBio) {
+      throw new ValidationError('Display name or bio is required');
     }
-    const session = await adminProfileService.updateDisplayName(req.user.id, rawName);
+
+    const session = await adminProfileService.updateProfile(req.user.id, {
+      displayName: hasName ? rawName : undefined,
+      bio: hasBio ? rawBio : undefined,
+    });
     res.status(200).json(formatSuccess(session, 'Profile updated successfully'));
   } catch (error) {
     if (error.statusCode === 400 || error instanceof ValidationError) {

@@ -85,3 +85,34 @@ export const categorySchema = Joi.object({
   name: Joi.string().trim().min(2).max(120).required(),
   description: Joi.string().max(1000).allow(null, '')
 });
+
+export const invitationCreateSchema = Joi.object({
+  recipientName: Joi.string().trim().min(2).max(120).required(),
+  recipientEmail: Joi.string().email().required(),
+  roleType: Joi.string().valid('user', 'author', 'publisher').required(),
+  subject: Joi.string().trim().min(3).max(200).required(),
+  message: Joi.string().trim().min(10).max(5000).required(),
+  expiresAt: Joi.date().iso().greater('now').required(),
+  sendImmediately: Joi.boolean().default(true),
+});
+
+export const invitationPreviewSchema = Joi.object({
+  roleType: Joi.string().valid('user', 'author', 'publisher').required(),
+  recipientName: Joi.string().trim().min(2).max(120).allow(''),
+  subject: Joi.string().trim().max(200).allow(''),
+  message: Joi.string().trim().max(5000).allow(''),
+  expiresAt: Joi.date().iso().optional(),
+});
+
+export const invitationAcceptSchema = Joi.object({
+  password: Joi.string().min(6).max(128).required(),
+  displayName: Joi.string().trim().min(2).max(80).optional(),
+});
+
+export const invitationUpdateSchema = Joi.object({
+  recipientName: Joi.string().trim().min(2).max(120).optional(),
+  roleType: Joi.string().valid('user', 'author', 'publisher').optional(),
+  subject: Joi.string().trim().min(3).max(200).optional(),
+  message: Joi.string().trim().min(10).max(5000).optional(),
+  expiresAt: Joi.date().iso().greater('now').optional(),
+}).min(1);

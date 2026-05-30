@@ -1,6 +1,21 @@
 import { formatSuccess } from '../utils/responseFormatter.js';
 import { adminUserService } from '../services/adminUserService.js';
 
+import { adminUserBulkService } from '../services/adminUserBulkService.js';
+
+export const bulkUploadUsers = async (req, res, next) => {
+  try {
+    const rows = req.body?.rows;
+    const summary = await adminUserBulkService.processBulkRows(rows, req.user?.id);
+    res.status(200).json(formatSuccess(summary, 'Bulk import completed'));
+  } catch (error) {
+    if (error.statusCode === 400) {
+      error.statusCode = 400;
+    }
+    next(error);
+  }
+};
+
 export const getUserStats = async (req, res, next) => {
   try {
     const stats = await adminUserService.getStats();

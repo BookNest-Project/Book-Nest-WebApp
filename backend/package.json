@@ -10,6 +10,8 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "setup:approval": "node scripts/run-approval-extensions.mjs",
+    "setup:invitations": "node scripts/run-admin-invitations.mjs",
+    "test:smtp": "node scripts/test-smtp.mjs",
     "setup:demo": "node scripts/setup-demo-book.mjs"
   },
   "keywords": [],

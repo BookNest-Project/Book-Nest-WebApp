@@ -31,6 +31,17 @@ export const formatSessionUser = (user, profile = null, authMeta = null) => {
       'Admin User';
     if (publicName.length < 2) publicName = 'Admin User';
     avatarUrl = authMeta?.avatar_url || profile?.avatar_url || null;
+    const bio = authMeta?.bio?.trim() || profile?.bio?.trim() || null;
+
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      account_status: user.account_status,
+      publicName,
+      avatarUrl,
+      bio,
+    };
   } else if (profile) {
     if (user.role === 'reader' && profile.display_name) {
       publicName = profile.display_name;

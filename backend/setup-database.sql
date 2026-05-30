@@ -130,7 +130,8 @@ create unique index publisher_profiles_company_name_key
 create table public.admin_profiles (
   user_id uuid primary key references public.users (id) on delete cascade,
   display_name varchar(80) not null,
-  avatar_url text, 
+  avatar_url text,
+  bio text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   constraint admin_profiles_display_name_trimmed

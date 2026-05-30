@@ -62,7 +62,7 @@ export const userRepository = {
   async findAdminProfile(userId) {
     const { data: profile, error } = await supabaseAdmin
       .from('admin_profiles')
-      .select('display_name, avatar_url, created_at, updated_at')
+      .select('display_name, avatar_url, bio, created_at, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
 

@@ -13,7 +13,7 @@ export const adminProfileRepository = {
   async findByUserId(userId) {
     const { data, error } = await supabaseAdmin
       .from('admin_profiles')
-      .select('user_id, display_name, avatar_url, created_at, updated_at')
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -32,7 +32,7 @@ export const adminProfileRepository = {
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', userId)
-      .select('user_id, display_name, avatar_url, created_at, updated_at')
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
       .maybeSingle();
 
     if (error) throw error;
@@ -40,14 +40,23 @@ export const adminProfileRepository = {
   },
 
   async updateDisplayName(userId, displayName) {
+    return this.updateProfile(userId, { displayName });
+  },
+
+  async updateProfile(userId, { displayName, bio }) {
+    const updates = { updated_at: new Date().toISOString() };
+    if (displayName !== undefined) {
+      updates.display_name = safeDisplayName(displayName);
+    }
+    if (bio !== undefined) {
+      updates.bio = bio;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('admin_profiles')
-      .update({
-        display_name: displayName,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq('user_id', userId)
-      .select('user_id, display_name, avatar_url, created_at, updated_at')
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
       .maybeSingle();
 
     if (error) throw error;
@@ -67,7 +76,7 @@ export const adminProfileRepository = {
         },
         { onConflict: 'user_id' },
       )
-      .select('user_id, display_name, avatar_url, created_at, updated_at')
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
       .maybeSingle();
 
     if (error) throw error;
@@ -90,7 +99,7 @@ export const adminProfileRepository = {
         display_name: safeName,
         avatar_url: avatarUrl,
       })
-      .select('user_id, display_name, avatar_url, created_at, updated_at')
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
       .single();
 
     if (error) throw error;

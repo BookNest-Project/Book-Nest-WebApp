@@ -16,8 +16,11 @@ import sellerRoutes from './routes/sellerRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import invitationRoutes from './routes/invitationRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import { warnIfApprovalSchemaMissing } from './services/approvalSchemaCheck.js';
+import { warnIfInvitationSchemaMissing } from './services/invitationSchemaCheck.js';
+import { warnIfSmtpNotConfigured } from './services/smtpConfigCheck.js';
 
 
  
@@ -81,6 +84,7 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/invitations', invitationRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api', uploadRoutes);
@@ -143,6 +147,8 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, async () => {
   await warnIfApprovalSchemaMissing().catch(() => {});
+  await warnIfInvitationSchemaMissing().catch(() => {});
+  await warnIfSmtpNotConfigured().catch(() => {});
   console.log(`
   🚀 BookNest Backend Started!
   📍 Port: ${PORT}
