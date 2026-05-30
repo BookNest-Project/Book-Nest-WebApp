@@ -19,6 +19,8 @@ import uploadRoutes from './routes/uploadRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import gamificationRoutes from './routes/gamificationRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import { startStreakReminderCron } from './services/notificationService.js';
 import communityRoutes from './routes/communityRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import checkoutRoutes from './routes/checkoutRoutes.js';
@@ -128,6 +130,7 @@ app.use('/api', uploadRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/gamification', gamificationRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
@@ -201,6 +204,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 BookNest API running on port ${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  startStreakReminderCron();
 });
 
 export default app;

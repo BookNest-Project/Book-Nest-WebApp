@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.js';
 const router = express.Router();
 
 router.get('/wallet', authenticate, sellerFinanceController.getWallet);
+router.get('/earnings/summary', authenticate, sellerFinanceController.getEarningsSummary);
 router.get('/earnings', authenticate, sellerFinanceController.getEarnings);
 router.get('/withdrawals', authenticate, sellerFinanceController.getWithdrawals);
 router.post('/withdrawals', authenticate, sellerFinanceController.requestWithdrawal);

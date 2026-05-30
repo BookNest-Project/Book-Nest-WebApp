@@ -44,8 +44,9 @@ export const profileController = {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      const { url } = await fileUploadService.uploadCoverImage(req.file, userId);
-      await profileRepository.updateAvatar(userId, url);
+      const { url } = await fileUploadService.uploadAvatar(req.file, userId);
+      const existing = await profileRepository.getProfile(userId);
+      await profileRepository.updateAvatar(userId, url, existing.avatar_url);
 
       res.status(200).json(formatSuccess({ avatar_url: url }, 'Avatar updated'));
     } catch (error) {

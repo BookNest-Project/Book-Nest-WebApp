@@ -28,4 +28,26 @@ export const analyticsService = {
   async getSalesReport(userId, from, to) {
     return analyticsRepository.getSalesReport(userId, from, to);
   },
+
+  async getBookPerformance(userId) {
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    const books = await analyticsRepository.getBookPerformance(userId);
+    const summary = {
+      total_books: books.length,
+      total_wishlists: books.reduce((s, b) => s + (b.wishlist_count || 0), 0),
+      total_reviews: books.reduce((s, b) => s + (b.review_count || 0), 0),
+      avg_catalog_rating:
+        books.filter((b) => b.review_count > 0).length > 0
+          ? books.reduce((s, b) => s + (b.avg_rating || 0), 0) /
+            books.filter((b) => b.review_count > 0).length
+          : 0,
+    };
+
+    logger.info('Book performance analytics retrieved', { userId, count: books.length });
+
+    return { summary, books };
+  },
 };

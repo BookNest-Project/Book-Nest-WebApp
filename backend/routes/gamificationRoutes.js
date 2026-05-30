@@ -6,5 +6,6 @@ const router = express.Router();
 
 router.use(authenticate);
 router.get('/me', gamificationController.getMe);
+router.post('/activity', gamificationController.recordActivity);
 
 export default router;

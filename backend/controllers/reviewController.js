@@ -40,11 +40,14 @@ export const reviewController = {
 
   async canReview(req, res, next) {
     try {
-      const can = await reviewService.canReview(req.user.id, req.params.id);
-      const existing = can
-        ? await reviewService.getUserReviewForBook(req.user.id, req.params.id)
-        : null;
-      res.status(200).json(formatSuccess({ can_review: can && !existing, existing_review: existing }));
+      const existing = await reviewService.getUserReviewForBook(req.user.id, req.params.id);
+      const eligible = await reviewService.canReview(req.user.id, req.params.id);
+      res.status(200).json(
+        formatSuccess({
+          can_review: eligible && !existing,
+          existing_review: existing,
+        })
+      );
     } catch (error) {
       next(error);
     }

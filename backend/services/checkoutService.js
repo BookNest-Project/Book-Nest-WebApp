@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../config/supabase.js';
 import { cartService } from './cartService.js';
 import { chapaService } from './chapaService.js';
 import { sellerFinanceService } from './sellerFinanceService.js';
+import { incrementBookSale } from './bookSalesService.js';
 import { logger } from '../utils/logger.js';
 import { assertCanPurchaseFormats } from '../utils/purchaseValidation.js';
 
@@ -293,10 +294,8 @@ export const checkoutService = {
         .single();
 
       if (bookFormat?.book_id) {
-        await supabaseAdmin.rpc('increment_book_sales', {
-          book_id: bookFormat.book_id,
-          amount: 1,
-        });
+        const lineAmount = amountByFormat.get(bookFormatId) ?? transaction.amount;
+        await incrementBookSale(bookFormat.book_id, lineAmount);
       }
 
       const lineAmount = amountByFormat.get(bookFormatId) ?? transaction.amount;

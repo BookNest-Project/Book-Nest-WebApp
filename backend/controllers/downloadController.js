@@ -58,24 +58,37 @@ export const downloadController = {
         });
       }
 
-      // Fetch the file from Supabase
+      // Stream file to client (faster time-to-first-byte than buffering entirely)
       const response = await fetch(signedUrlData.signedUrl);
-      
+
       if (!response.ok) {
         console.log('Supabase fetch error:', response.status);
         throw new Error(`Supabase returned ${response.status}`);
       }
-
-      const fileBuffer = await response.arrayBuffer();
 
       const contentType = bookFormat.format_type === 'PDF' ? 'application/pdf' : 'audio/mpeg';
       const fileExt = bookFormat.format_type === 'PDF' ? 'pdf' : 'mp3';
       const fileName = `${bookFormatId}.${fileExt}`;
 
       res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+
+      if (response.body) {
+        const { Readable } = await import('stream');
+        const { pipeline } = await import('stream/promises');
+        const nodeStream = Readable.fromWeb(response.body);
+        await pipeline(nodeStream, res);
+        return;
+      }
+
+      const fileBuffer = await response.arrayBuffer();
       res.setHeader('Content-Length', fileBuffer.byteLength);
-      
       res.send(Buffer.from(fileBuffer));
     } catch (error) {
       console.error('Download error:', error);

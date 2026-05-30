@@ -36,6 +36,16 @@ export const sellerFinanceController = {
     }
   },
 
+  async getEarningsSummary(req, res, next) {
+    try {
+      if (!requireSellerRole(req, res)) return;
+      const summary = await sellerFinanceService.getEarningsSummary(req.user.id);
+      res.status(200).json(formatSuccess(summary));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getWithdrawals(req, res, next) {
     try {
       if (!requireSellerRole(req, res)) return;

@@ -1,21 +1,27 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
+import { computeSellerSales } from '../services/bookSalesService.js';
+
+function buildLast30DaysSeries(byDay) {
+  const series = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    const row = byDay[date];
+    series.push({
+      date,
+      sales: row?.sales || 0,
+      revenue: row?.revenue || 0,
+    });
+  }
+  return series;
+}
 
 export const analyticsRepository = {
   async getSalesSummary(userId) {
     try {
-      const { data: books, error: booksError } = await supabaseAdmin
-        .from('books')
-        .select('id, title, cover_image_url, sales_count, total_revenue')
-        .eq('uploaded_by', userId)
-        .eq('is_active', true);
-
-      if (booksError) {
-        logger.error('Analytics books error', { error: booksError.message });
-        throw booksError;
-      }
-
-      const bookIds = (books || []).map((b) => b.id);
+      const { byBook, totalCopies, totalRevenue, books } = await computeSellerSales(userId);
 
       const { count: pendingCount } = await supabaseAdmin
         .from('books')
@@ -23,10 +29,7 @@ export const analyticsRepository = {
         .eq('uploaded_by', userId)
         .eq('status', 'pending_review');
 
-      const totalBooks = books?.length || 0;
-      const totalCopiesSold = books?.reduce((sum, b) => sum + (b.sales_count || 0), 0) || 0;
-      const totalRevenue = books?.reduce((sum, b) => sum + parseFloat(b.total_revenue || 0), 0) || 0;
-
+      const bookIds = (books || []).map((b) => b.id);
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -59,22 +62,25 @@ export const analyticsRepository = {
             byDay[day].sales += 1;
             byDay[day].revenue += parseFloat(item.amount) || 0;
           }
-          salesOverTime = Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date));
+          salesOverTime = buildLast30DaysSeries(byDay);
+        } else {
+          salesOverTime = buildLast30DaysSeries({});
         }
+      } else {
+        salesOverTime = buildLast30DaysSeries({});
       }
 
-      const topBooks =
-        books
-          ?.filter((b) => (b.sales_count || 0) > 0)
-          .sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0))
-          .slice(0, 5)
-          .map((b) => ({
-            book_id: b.id,
-            title: b.title,
-            cover_image_url: b.cover_image_url,
-            copies_sold: b.sales_count || 0,
-            revenue: parseFloat(b.total_revenue || 0),
-          })) || [];
+      const topBooks = (books || [])
+        .map((b) => ({
+          book_id: b.id,
+          title: b.title,
+          cover_image_url: b.cover_image_url,
+          copies_sold: byBook[b.id]?.copies || 0,
+          revenue: byBook[b.id]?.revenue || 0,
+        }))
+        .filter((b) => b.copies_sold > 0)
+        .sort((a, b) => b.copies_sold - a.copies_sold)
+        .slice(0, 5);
 
       const { data: wallet } = await supabaseAdmin
         .from('seller_wallets')
@@ -83,8 +89,8 @@ export const analyticsRepository = {
         .maybeSingle();
 
       return {
-        total_books: totalBooks,
-        total_copies_sold: totalCopiesSold,
+        total_books: books?.length || 0,
+        total_copies_sold: totalCopies,
         total_revenue: totalRevenue,
         pending_approval: pendingCount || 0,
         sales_over_time: salesOverTime,
@@ -150,5 +156,56 @@ export const analyticsRepository = {
 
     const total_revenue = rows.reduce((s, r) => s + r.amount, 0);
     return { rows, total_revenue, total_sales: rows.length };
+  },
+
+  async getBookPerformance(userId) {
+    const { byBook, books } = await computeSellerSales(userId);
+
+    const bookIds = (books || []).map((b) => b.id);
+    const wishlistCounts = {};
+
+    if (bookIds.length) {
+      const { data: wishlistRows } = await supabaseAdmin
+        .from('wishlist')
+        .select('book_id')
+        .in('book_id', bookIds);
+
+      for (const row of wishlistRows || []) {
+        wishlistCounts[row.book_id] = (wishlistCounts[row.book_id] || 0) + 1;
+      }
+    }
+
+    const totalCopies = Object.values(byBook).reduce((sum, b) => sum + b.copies, 0) || 1;
+
+    return (books || []).map((book) => {
+      const computed = byBook[book.id] || { copies: 0, revenue: 0 };
+      const copies = computed.copies;
+      const revenue = computed.revenue;
+      const wishlistCount = wishlistCounts[book.id] || 0;
+      const rating = parseFloat(book.avg_rating || 0);
+      const reviewCount = book.review_count || 0;
+
+      const salesShare = totalCopies > 0 ? Math.round((copies / totalCopies) * 100) : 0;
+      const marketScore = Math.min(
+        100,
+        Math.round(wishlistCount * 3 + reviewCount * 8 + copies * 5 + rating * 12)
+      );
+
+      return {
+        book_id: book.id,
+        title: book.title,
+        cover_image_url: book.cover_image_url,
+        status: book.status,
+        copies_sold: copies,
+        revenue,
+        avg_rating: rating,
+        review_count: reviewCount,
+        wishlist_count: wishlistCount,
+        sales_share_percent: salesShare,
+        engagement_score: marketScore,
+        market_score: marketScore,
+        created_at: book.created_at,
+      };
+    });
   },
 };
