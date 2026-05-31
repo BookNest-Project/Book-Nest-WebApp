@@ -30,6 +30,16 @@ function mapSupabaseAuthError(error) {
   return error;
 }
 
+function isEmailAlreadyRegisteredError(error) {
+  if (error?.message === 'EMAIL_ALREADY_REGISTERED') return true;
+  const message = error?.message?.toLowerCase() || '';
+  return (
+    error?.status === 422 ||
+    message.includes('already been registered') ||
+    message.includes('already registered')
+  );
+}
+
 async function generateAuthLink(type, email, { redirectTo, password } = {}) {
   const payload = {
     type,
@@ -119,6 +129,31 @@ export const authRepository = {
     return this.getAuthUserById(dbUser.id);
   },
 
+  isEmailAlreadyRegisteredError,
+
+  /**
+   * Find an existing auth user by email when public.users may be missing.
+   * Uses generateLink (no email sent) as a fallback when getUserById is unavailable.
+   */
+  async resolveAuthUserByEmail(email) {
+    const normalized = email.trim().toLowerCase();
+    const fromDb = await this.findAuthUserByEmail(normalized);
+    if (fromDb) return fromDb;
+
+    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: normalized,
+      options: { redirectTo: getEmailVerificationRedirectUrl() },
+    });
+
+    if (error) {
+      logger.warn('resolveAuthUserByEmail failed', { email: normalized, error: error.message });
+      return null;
+    }
+
+    return data?.user ?? null;
+  },
+
   async ensurePublicUserRecord(authUser) {
     const existing = await userRepository.findById(authUser.id);
     if (existing) return existing;
@@ -188,8 +223,8 @@ export const authRepository = {
     });
 
     if (error) {
-      logger.error('Auth createUser error', { email, error: error.message });
-      if (error.message?.toLowerCase().includes('already')) {
+      logger.error('Auth createUser error', { email, error: error.message, status: error.status });
+      if (isEmailAlreadyRegisteredError(error)) {
         throw new Error('EMAIL_ALREADY_REGISTERED');
       }
       throw error;

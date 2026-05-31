@@ -29,6 +29,29 @@ function isFullyVerified(authUser, dbUser) {
   return false;
 }
 
+async function resolveRegistrationState(normalizedEmail) {
+  let dbUser = await userRepository.findByEmail(normalizedEmail);
+  let authUser = dbUser?.id ? await authRepository.getAuthUserById(dbUser.id) : null;
+
+  if (!authUser) {
+    authUser = await authRepository.resolveAuthUserByEmail(normalizedEmail);
+    if (authUser) {
+      await authRepository.ensurePublicUserRecord(authUser);
+      dbUser = await userRepository.findById(authUser.id);
+    }
+  }
+
+  return { dbUser, authUser };
+}
+
+async function resumeUnverifiedRegistration(userId, normalizedEmail, password, trimmedName) {
+  await authRepository.updateUnverifiedUser(userId, password, {
+    display_name: trimmedName,
+    role: 'reader',
+  });
+  logger.info('Resuming incomplete registration', { userId, email: normalizedEmail });
+}
+
 export const authService = {
   /**
    * Public self-registration for readers only (no invitation).
@@ -38,8 +61,7 @@ export const authService = {
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedName = displayName.trim();
 
-    let dbUser = await userRepository.findByEmail(normalizedEmail);
-    let authUser = dbUser?.id ? await authRepository.getAuthUserById(dbUser.id) : null;
+    let { dbUser, authUser } = await resolveRegistrationState(normalizedEmail);
 
     if (isFullyVerified(authUser, dbUser)) {
       throw new ValidationError(
@@ -47,7 +69,7 @@ export const authService = {
       );
     }
 
-    const resumeUserId = dbUser?.id || authUser?.id;
+    const resumeUserId = authUser?.id || dbUser?.id;
     if (await userRepository.isDisplayNameTaken(trimmedName, resumeUserId)) {
       throw new ValidationError('This display name is already taken');
     }
@@ -55,14 +77,11 @@ export const authService = {
     let userId;
     let resumed = false;
 
-    if (dbUser && !dbUser.is_email_verified) {
-      userId = dbUser.id;
+    if (authUser) {
+      userId = authUser.id;
       resumed = true;
-      await authRepository.updateUnverifiedUser(userId, password, {
-        display_name: trimmedName,
-        role: 'reader',
-      });
-      logger.info('Resuming incomplete registration', { userId, email: normalizedEmail });
+      await resumeUnverifiedRegistration(userId, normalizedEmail, password, trimmedName);
+      await authRepository.ensurePublicUserRecord(authUser);
     } else {
       try {
         const newAuthUser = await authRepository.signUpReader(normalizedEmail, password, {
@@ -71,21 +90,21 @@ export const authService = {
         });
         userId = newAuthUser.id;
         await authRepository.ensurePublicUserRecord(newAuthUser);
-        dbUser = await userRepository.findById(userId);
       } catch (error) {
-        if (error.message === 'EMAIL_ALREADY_REGISTERED') {
-          dbUser = await userRepository.findByEmail(normalizedEmail);
-          if (dbUser && !dbUser.is_email_verified) {
-            userId = dbUser.id;
+        if (authRepository.isEmailAlreadyRegisteredError(error)) {
+          authUser = await authRepository.resolveAuthUserByEmail(normalizedEmail);
+          if (authUser && !authRepository.isAuthEmailVerified(authUser)) {
+            userId = authUser.id;
             resumed = true;
-            await authRepository.updateUnverifiedUser(userId, password, {
-              display_name: trimmedName,
-              role: 'reader',
-            });
-            logger.info('Resuming after duplicate auth user', { userId, email: normalizedEmail });
+            await resumeUnverifiedRegistration(userId, normalizedEmail, password, trimmedName);
+            await authRepository.ensurePublicUserRecord(authUser);
+          } else if (authUser && authRepository.isAuthEmailVerified(authUser)) {
+            throw new ValidationError(
+              'This email is already registered. Sign in instead, or use forgot password if you need help.'
+            );
           } else {
             throw new ValidationError(
-              'This email is already registered. Sign in instead, or use resend verification if you never confirmed.'
+              'We could not complete signup for this email. Please try again or contact support.'
             );
           }
         } else {
@@ -134,14 +153,23 @@ export const authService = {
   },
 
   async login(email, password, rememberMe = false) {
-    const { user: authUser, session, error } = await authRepository.verifyCredentials(email, password);
+    const normalizedEmail = email.trim().toLowerCase();
+    const { user: authUser, session, error } = await authRepository.verifyCredentials(
+      normalizedEmail,
+      password
+    );
 
     if (error || !authUser) {
-      logger.warn('Login failed - invalid credentials', { email });
+      logger.warn('Login failed - invalid credentials', { email: normalizedEmail });
       throw new UnauthorizedError('Invalid email or password');
     }
 
-    let dbUser = await userRepository.findByEmail(email);
+    let dbUser = await userRepository.findByEmail(normalizedEmail);
+
+    if (!dbUser) {
+      await authRepository.ensurePublicUserRecord(authUser);
+      dbUser = await userRepository.findByEmail(normalizedEmail);
+    }
 
     if (!dbUser) {
       throw new UnauthorizedError('User account not found');
@@ -275,19 +303,13 @@ export const authService = {
 
   async resendVerification(email) {
     const normalizedEmail = email.trim().toLowerCase();
-    const dbUser = await userRepository.findByEmail(normalizedEmail);
+    let { dbUser, authUser } = await resolveRegistrationState(normalizedEmail);
 
-    if (!dbUser) {
+    if (!dbUser && !authUser) {
       throw new ValidationError('No account found with this email');
     }
 
-    if (dbUser.is_email_verified) {
-      throw new ValidationError('Email already verified. Please sign in.');
-    }
-
-    const authUser = await authRepository.getAuthUserById(dbUser.id);
-    if (authUser && authRepository.isAuthEmailVerified(authUser)) {
-      await userRepository.updateEmailVerification(dbUser.id, true, authUser.email_confirmed_at);
+    if (isFullyVerified(authUser, dbUser)) {
       throw new ValidationError('Email already verified. Please sign in.');
     }
 
@@ -302,7 +324,10 @@ export const authService = {
       );
     }
 
-    logger.info('Verification email resent', { email: normalizedEmail, userId: dbUser.id });
+    logger.info('Verification email resent', {
+      email: normalizedEmail,
+      userId: dbUser?.id || authUser?.id,
+    });
 
     return { message: 'Verification email resent. Please check your inbox.' };
   },
