@@ -57,13 +57,14 @@ async function generateAuthLink(type, email, { redirectTo, password } = {}) {
 
 async function deliverVerificationEmail(email, password) {
   const redirectTo = getEmailVerificationRedirectUrl();
-  const verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
+  const linkOptions = password ? { redirectTo, password } : { redirectTo };
+  const verifyLink = await generateAuthLink('signup', email, linkOptions);
   const result = await sendVerificationEmail(email, verifyLink);
   assertEmailSent(result, 'Failed to send verification email');
   logger.info('Verification email dispatched', {
     email,
     redirectTo,
-    via: result.devMode ? 'dev-console' : 'smtp',
+    via: result.devMode ? 'dev-console' : result.via || 'email',
   });
 }
 
@@ -80,12 +81,14 @@ export const authRepository = {
   getPasswordResetRedirectUrl,
 
   /**
-   * Reader self-signup — creates auth user and sends confirmation via Nodemailer (SMTP).
+   * Reader self-signup — creates auth user (does not send email; use sendVerificationEmailForUser).
    */
   async signUpReader(email, password, metadata = {}) {
-    const authUser = await this.createUser(email, password, metadata);
-    await deliverVerificationEmail(email, password);
-    return authUser;
+    return this.createUser(email, password, metadata);
+  },
+
+  async sendVerificationEmailForUser(email, password) {
+    await deliverVerificationEmail(email, password || undefined);
   },
 
   /**

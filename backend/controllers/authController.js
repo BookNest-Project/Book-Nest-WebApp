@@ -20,7 +20,10 @@ export const authController = {
         res.status(201).json({
           success: true,
           message: result.message,
-          data: { email: result.email },
+          data: {
+            email: result.email,
+            verificationEmailPending: !!result.verificationEmailPending,
+          },
         });
       } catch (error) {
         next(error);

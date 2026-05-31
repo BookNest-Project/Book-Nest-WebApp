@@ -10,35 +10,67 @@ import {
   SESSION_DURATION_REMEMBER_MS,
 } from '../utils/responseFormatter.js';
 
+async function sendVerificationOrThrow(email, password) {
+  try {
+    await authRepository.sendVerificationEmailForUser(email, password);
+    return { sent: true };
+  } catch (error) {
+    if (error.name === 'EMAIL_SEND_FAILED') {
+      logger.error('Verification email failed', { email, error: error.message });
+      return { sent: false, error: error.message };
+    }
+    throw error;
+  }
+}
+
 export const authService = {
   /**
    * Public self-registration for readers only (no invitation).
    */
   async register(email, password, displayName) {
-    const existingUser = await userRepository.findByEmail(email);
-    if (existingUser) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const trimmedName = displayName.trim();
+
+    const existingUser = await userRepository.findByEmail(normalizedEmail);
+    if (existingUser?.is_email_verified) {
       throw new ValidationError('Email already registered');
     }
 
-    const trimmedName = displayName.trim();
-    if (await userRepository.isDisplayNameTaken(trimmedName)) {
+    if (await userRepository.isDisplayNameTaken(trimmedName, existingUser?.id)) {
       throw new ValidationError('This display name is already taken');
+    }
+
+    // Incomplete signup — resend verification instead of blocking
+    if (existingUser && !existingUser.is_email_verified) {
+      await userRepository.upsertReaderProfile(existingUser.id, trimmedName);
+      const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
+      if (!emailResult.sent) {
+        throw new ValidationError(
+          'Your account exists but we could not send the verification email. Use resend verification or try again shortly.'
+        );
+      }
+      return {
+        message: 'Verification email sent. Please check your inbox.',
+        email: normalizedEmail,
+      };
     }
 
     let authUser;
     try {
-      authUser = await authRepository.signUpReader(email, password, {
+      authUser = await authRepository.signUpReader(normalizedEmail, password, {
         display_name: trimmedName,
         role: 'reader',
       });
     } catch (error) {
       if (error.message === 'EMAIL_ALREADY_REGISTERED') {
-        throw new ValidationError('Email already registered');
-      }
-      if (error.name === 'EMAIL_SEND_FAILED') {
-        throw new ValidationError(
-          'We could not send the verification email. Check your inbox later or use resend verification after fixing SMTP settings.'
-        );
+        const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
+        if (emailResult.sent) {
+          return {
+            message: 'Verification email sent. Please check your inbox.',
+            email: normalizedEmail,
+          };
+        }
+        throw new ValidationError('Email already registered. Try resend verification from the login page.');
       }
       throw error;
     }
@@ -52,11 +84,25 @@ export const authService = {
       throw error;
     }
 
-    logger.info('Reader registered successfully', { userId: authUser.id, email });
+    const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
+    if (!emailResult.sent) {
+      logger.warn('Account created but verification email failed', {
+        userId: authUser.id,
+        email: normalizedEmail,
+      });
+      return {
+        message:
+          'Account created. We could not send the verification email right now — use resend verification on the login page.',
+        email: normalizedEmail,
+        verificationEmailPending: true,
+      };
+    }
+
+    logger.info('Reader registered successfully', { userId: authUser.id, email: normalizedEmail });
 
     return {
       message: 'Verification email sent. Please check your inbox.',
-      email: authUser.email,
+      email: normalizedEmail,
     };
   },
 
@@ -195,7 +241,8 @@ export const authService = {
   },
 
   async resendVerification(email) {
-    const user = await userRepository.findByEmail(email);
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await userRepository.findByEmail(normalizedEmail);
     if (!user) {
       throw new ValidationError('No account found with this email');
     }
@@ -204,16 +251,15 @@ export const authService = {
       throw new ValidationError('Email already verified. Please login.');
     }
 
-    try {
-      await authRepository.resendVerificationEmail(email);
-    } catch (error) {
-      if (error.name === 'EMAIL_SEND_FAILED') {
-        throw new ValidationError(error.message);
-      }
-      throw error;
+    const emailResult = await sendVerificationOrThrow(normalizedEmail);
+    if (!emailResult.sent) {
+      throw new ValidationError(
+        emailResult.error ||
+          'We could not send the verification email. Please try again in a few minutes.'
+      );
     }
 
-    logger.info('Verification email resent', { email, userId: user.id });
+    logger.info('Verification email resent', { email: normalizedEmail, userId: user.id });
 
     return { message: 'Verification email resent. Please check your inbox.' };
   },
@@ -248,8 +294,6 @@ export const authService = {
         break;
     }
 
-    // Fallback: older accounts might not have a profile row yet, but Supabase Auth metadata does.
-    // Use it so the UI doesn't show the email prefix as the "name".
     if (
       !profile ||
       (dbUser.role === 'reader' && !profile.display_name) ||

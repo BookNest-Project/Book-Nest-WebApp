@@ -1,10 +1,18 @@
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { logger } from '../utils/logger.js';
 
 let transporter = null;
+let resendClient = null;
+
+const SMTP_TIMEOUT_MS = 15_000;
 
 function getSmtpPass() {
   return (process.env.SMTP_PASS || '').replace(/\s+/g, '').trim();
+}
+
+export function isResendConfigured() {
+  return Boolean(process.env.RESEND_API_KEY?.trim());
 }
 
 export function isSmtpConfigured() {
@@ -13,6 +21,23 @@ export function isSmtpConfigured() {
       process.env.SMTP_USER?.trim() &&
       getSmtpPass()
   );
+}
+
+/** Preferred transport for production (Railway blocks SMTP on most plans). */
+export function getEmailTransportMode() {
+  if (isResendConfigured()) return 'resend';
+  if (isSmtpConfigured()) return 'smtp';
+  if (process.env.NODE_ENV !== 'production' || process.env.AUTH_RELAX_EMAIL_LIMITS === 'true') {
+    return 'dev-log';
+  }
+  return 'none';
+}
+
+function getResendClient() {
+  if (resendClient) return resendClient;
+  if (!isResendConfigured()) return null;
+  resendClient = new Resend(process.env.RESEND_API_KEY.trim());
+  return resendClient;
 }
 
 function getTransporter() {
@@ -27,13 +52,25 @@ function getTransporter() {
       user: process.env.SMTP_USER.trim(),
       pass: getSmtpPass(),
     },
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
   });
 
   return transporter;
 }
 
 function getFromAddress() {
-  return process.env.EMAIL_FROM || `BookNest <${process.env.SMTP_USER}>`;
+  if (process.env.EMAIL_FROM?.trim()) {
+    return process.env.EMAIL_FROM.trim();
+  }
+  if (isResendConfigured()) {
+    return 'BookNest <onboarding@resend.dev>';
+  }
+  if (process.env.SMTP_USER?.trim()) {
+    return `BookNest <${process.env.SMTP_USER.trim()}>`;
+  }
+  return 'BookNest <noreply@booknest.app>';
 }
 
 function allowDevEmailLog() {
@@ -58,25 +95,34 @@ function layout(title, bodyHtml) {
 </html>`;
 }
 
-async function deliverEmail({ to, subject, html, devLink }) {
-  const transport = getTransporter();
+async function sendViaResend({ to, subject, html }) {
+  const client = getResendClient();
+  if (!client) return null;
 
-  if (!transport) {
-    if (allowDevEmailLog()) {
-      logger.warn('SMTP not configured — logging email link for development', {
-        to,
-        subject,
-        link: devLink,
-      });
-      return { sent: true, devMode: true };
+  try {
+    const { data, error } = await client.emails.send({
+      from: getFromAddress(),
+      to,
+      subject,
+      html,
+    });
+
+    if (error) {
+      logger.error('Resend API error', { to, subject, error: error.message });
+      return { sent: false, error: error.message };
     }
 
-    logger.error('SMTP not configured; cannot send email', { to, subject });
-    return {
-      sent: false,
-      error: 'Email service is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS.',
-    };
+    logger.info('Email sent via Resend', { to, subject, id: data?.id });
+    return { sent: true, via: 'resend' };
+  } catch (error) {
+    logger.error('Resend send failed', { to, subject, error: error.message });
+    return { sent: false, error: error.message };
   }
+}
+
+async function sendViaSmtp({ to, subject, html }) {
+  const transport = getTransporter();
+  if (!transport) return null;
 
   try {
     await transport.sendMail({
@@ -85,12 +131,45 @@ async function deliverEmail({ to, subject, html, devLink }) {
       subject,
       html,
     });
-    logger.info('Email sent', { to, subject });
-    return { sent: true };
+    logger.info('Email sent via SMTP', { to, subject });
+    return { sent: true, via: 'smtp' };
   } catch (error) {
-    logger.error('Email send error', { to, subject, error: error.message });
-    return { sent: false, error: error.message };
+    const hint =
+      error.code === 'ETIMEDOUT' || error.message?.includes('timeout')
+        ? ' (Railway blocks Gmail SMTP on most plans — set RESEND_API_KEY instead)'
+        : '';
+    logger.error('SMTP send error', { to, subject, error: error.message, code: error.code });
+    return { sent: false, error: `${error.message}${hint}` };
   }
+}
+
+async function deliverEmail({ to, subject, html, devLink }) {
+  if (isResendConfigured()) {
+    const resendResult = await sendViaResend({ to, subject, html });
+    if (resendResult?.sent) return resendResult;
+    if (resendResult && !isSmtpConfigured()) return resendResult;
+  }
+
+  if (isSmtpConfigured()) {
+    const smtpResult = await sendViaSmtp({ to, subject, html });
+    if (smtpResult) return smtpResult;
+  }
+
+  if (allowDevEmailLog()) {
+    logger.warn('Email not sent — logging link for development', {
+      to,
+      subject,
+      link: devLink,
+    });
+    return { sent: true, devMode: true };
+  }
+
+  logger.error('No email transport configured', { to, subject });
+  return {
+    sent: false,
+    error:
+      'Email service is not configured. On Railway set RESEND_API_KEY (recommended) or use SMTP on a Pro plan.',
+  };
 }
 
 export async function sendEmail({ to, subject, html, devLink }) {

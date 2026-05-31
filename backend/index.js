@@ -7,7 +7,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 import { logResolvedUrls } from './utils/envUrls.js';
-import { isSmtpConfigured } from './services/emailService.js';
+import { isSmtpConfigured, isResendConfigured, getEmailTransportMode } from './services/emailService.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -38,7 +38,9 @@ import publicRoute from './routes/publicRoutes.js'
 dotenv.config();
 logResolvedUrls(logger);
 logger.info('Email transport', {
-  smtp: isSmtpConfigured() ? 'configured' : 'not configured (links logged in dev)',
+  mode: getEmailTransportMode(),
+  resend: isResendConfigured(),
+  smtp: isSmtpConfigured(),
 });
 
 const app = express();
