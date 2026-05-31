@@ -152,6 +152,13 @@ export const authController = {
 
   me: async (req, res, next) => {
     try {
+      if (!req.user?.id) {
+        return res.status(200).json({
+          success: true,
+          data: null,
+        });
+      }
+
       const session = await authService.getCurrentUser(req.user.id);
       res.status(200).json({
         success: true,

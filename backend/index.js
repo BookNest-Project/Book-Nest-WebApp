@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 import { logResolvedUrls } from './utils/envUrls.js';
+import { isSmtpConfigured } from './services/emailService.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -36,6 +37,9 @@ import publicRoute from './routes/publicRoutes.js'
 // Load environment variables
 dotenv.config();
 logResolvedUrls(logger);
+logger.info('Email transport', {
+  smtp: isSmtpConfigured() ? 'configured' : 'not configured (links logged in dev)',
+});
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -155,12 +159,18 @@ app.use((req, res) => {
 
 // ✅ FIX 6: Global error handler
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', { message: err?.message, name: err?.name, stack: err?.stack });
-  
   let statusCode = err.statusCode || 500;
   let errorMessage = err.message || 'Internal server error';
   let errorCode = err.errorCode || 'INTERNAL_ERROR';
-  
+  const isGuestSessionCheck =
+    statusCode === 401 &&
+    req.path === '/me' &&
+    err.message === 'No token provided';
+
+  if (!isGuestSessionCheck) {
+    logger.error('Unhandled error', { message: err?.message, name: err?.name, stack: err?.stack });
+  }
+
   if (err.name === 'ValidationError') {
     statusCode = 400;
     errorCode = 'VALIDATION_ERROR';

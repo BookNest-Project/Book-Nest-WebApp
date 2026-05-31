@@ -27,7 +27,6 @@ export const authService = {
 
     let authUser;
     try {
-      // signUp sends the confirmation email; admin.createUser does not.
       authUser = await authRepository.signUpReader(email, password, {
         display_name: trimmedName,
         role: 'reader',
@@ -35,6 +34,11 @@ export const authService = {
     } catch (error) {
       if (error.message === 'EMAIL_ALREADY_REGISTERED') {
         throw new ValidationError('Email already registered');
+      }
+      if (error.name === 'EMAIL_SEND_FAILED') {
+        throw new ValidationError(
+          'We could not send the verification email. Check your inbox later or use resend verification after fixing SMTP settings.'
+        );
       }
       throw error;
     }
@@ -160,8 +164,14 @@ export const authService = {
       throw new NotFoundError('No account found with this email');
     }
 
-    const redirectUrl = authRepository.getPasswordResetRedirectUrl();
-    await authRepository.sendPasswordResetEmail(email, redirectUrl);
+    try {
+      await authRepository.sendPasswordResetEmail(email);
+    } catch (error) {
+      if (error.name === 'EMAIL_SEND_FAILED') {
+        throw new ValidationError(error.message);
+      }
+      throw error;
+    }
 
     logger.info('Password reset email sent', { email, userId: user.id });
 
@@ -194,7 +204,14 @@ export const authService = {
       throw new ValidationError('Email already verified. Please login.');
     }
 
-    await authRepository.resendVerificationEmail(email);
+    try {
+      await authRepository.resendVerificationEmail(email);
+    } catch (error) {
+      if (error.name === 'EMAIL_SEND_FAILED') {
+        throw new ValidationError(error.message);
+      }
+      throw error;
+    }
 
     logger.info('Verification email resent', { email, userId: user.id });
 

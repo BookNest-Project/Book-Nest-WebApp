@@ -3,6 +3,11 @@ import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
 import { getFrontendUrl } from '../utils/envUrls.js';
+import {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  assertEmailSent,
+} from '../services/emailService.js';
 
 function getEmailVerificationRedirectUrl() {
   return `${getFrontendUrl()}/auth/verify`;
@@ -24,59 +29,63 @@ function mapSupabaseAuthError(error) {
   return error;
 }
 
+async function generateAuthLink(type, email, { redirectTo, password } = {}) {
+  const payload = {
+    type,
+    email,
+    options: { redirectTo },
+  };
+
+  if (password) {
+    payload.password = password;
+  }
+
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink(payload);
+
+  if (error) {
+    logger.error('generateLink failed', { type, email, error: error.message });
+    throw mapSupabaseAuthError(error);
+  }
+
+  const actionLink = data?.properties?.action_link;
+  if (!actionLink) {
+    throw new Error('Could not generate auth link');
+  }
+
+  return actionLink;
+}
+
+async function deliverVerificationEmail(email, password) {
+  const redirectTo = getEmailVerificationRedirectUrl();
+  const verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
+  const result = await sendVerificationEmail(email, verifyLink);
+  assertEmailSent(result, 'Failed to send verification email');
+  logger.info('Verification email dispatched', {
+    email,
+    redirectTo,
+    via: result.devMode ? 'dev-console' : 'smtp',
+  });
+}
+
+async function deliverPasswordResetEmail(email) {
+  const redirectTo = getPasswordResetRedirectUrl();
+  const resetLink = await generateAuthLink('recovery', email, { redirectTo });
+  const result = await sendPasswordResetEmail(email, resetLink);
+  assertEmailSent(result, 'Failed to send password reset email');
+  logger.info('Password reset email sent via SMTP', { email, redirectTo, devMode: !!result.devMode });
+}
+
 export const authRepository = {
   getEmailVerificationRedirectUrl,
   getPasswordResetRedirectUrl,
 
   /**
-   * Reader self-signup — Supabase sends the confirmation email automatically
-   * (admin.createUser does NOT send confirmation emails).
+   * Reader self-signup — creates auth user and sends confirmation via Nodemailer (SMTP).
    */
   async signUpReader(email, password, metadata = {}) {
-    const redirectTo = getEmailVerificationRedirectUrl();
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectTo,
-        data: {
-          display_name: metadata.display_name || email.split('@')[0],
-        },
-      },
-    });
-
-    if (error) {
-      logger.error('Auth signUp error', { email, error: error.message });
-      const msg = error.message?.toLowerCase() || '';
-      if (msg.includes('already') || msg.includes('registered')) {
-        throw new Error('EMAIL_ALREADY_REGISTERED');
-      }
-      throw error;
-    }
-
-    if (!data.user) {
-      throw new Error('SIGNUP_FAILED');
-    }
-
-    try {
-      await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
-        app_metadata: { role: metadata.role || 'reader' },
-      });
-    } catch (metaError) {
-      logger.warn('Could not set app_metadata role after signup', {
-        userId: data.user.id,
-        error: metaError.message,
-      });
-    }
-
-    logger.info('Reader signup created; confirmation email requested', {
-      userId: data.user.id,
-      email,
-      redirectTo,
-    });
-
-    return data.user;
+    const authUser = await this.createUser(email, password, metadata);
+    await deliverVerificationEmail(email, password);
+    return authUser;
   },
 
   /**
@@ -181,42 +190,18 @@ export const authRepository = {
   },
 
   /**
-   * Send password reset email
+   * Send password reset email via Nodemailer (SMTP)
    */
-  async sendPasswordResetEmail(email, redirectUrl) {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: redirectUrl || getPasswordResetRedirectUrl(),
-    });
-
-    if (error) {
-      logger.error('Send reset email error', { email, error: error.message });
-      throw mapSupabaseAuthError(error);
-    }
-
-    logger.info('Password reset email sent', { email, redirectTo: redirectUrl });
+  async sendPasswordResetEmail(email) {
+    await deliverPasswordResetEmail(email);
     return true;
   },
 
   /**
-   * Resend email verification link
+   * Resend email verification link via Nodemailer (SMTP)
    */
   async resendVerificationEmail(email) {
-    const redirectTo = getEmailVerificationRedirectUrl();
-
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email,
-      options: {
-        emailRedirectTo: redirectTo,
-      },
-    });
-
-    if (error) {
-      logger.error('Resend verification error', { email, error: error.message });
-      throw error;
-    }
-
-    logger.info('Verification email resent', { email, redirectTo });
+    await deliverVerificationEmail(email);
     return true;
   },
 
@@ -245,7 +230,6 @@ export const authRepository = {
    * Sign out user (invalidate session)
    */
   async signOut(token) {
-    // Create a client with the user's token
     const userClient = createClient(
       process.env.SUPABASE_URL,
       process.env.SUPABASE_ANON_KEY,

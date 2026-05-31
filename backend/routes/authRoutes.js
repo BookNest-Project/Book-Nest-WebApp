@@ -1,6 +1,6 @@
 import express from 'express';
 import { authController } from '../controllers/authController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authenticateOptional } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 router.post('/confirm-email', authController.confirmEmail);
 
-// Protected routes (require auth)
-router.get('/me', authenticate, authController.me);
+// Session check — no token is normal for guests (register/login pages)
+router.get('/me', authenticateOptional, authController.me);
 
 export default router;
