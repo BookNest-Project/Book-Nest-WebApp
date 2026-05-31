@@ -7,7 +7,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 import { logResolvedUrls } from './utils/envUrls.js';
-import { isSmtpConfigured, isResendConfigured, getEmailTransportMode } from './services/emailService.js';
+import { isSmtpConfigured, isResendConfigured, isBrevoConfigured, getEmailTransportMode, getResolvedFromAddress } from './services/emailService.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -39,9 +39,10 @@ dotenv.config();
 logResolvedUrls(logger);
 logger.info('Email transport', {
   mode: getEmailTransportMode(),
+  brevo: isBrevoConfigured(),
   resend: isResendConfigured(),
   smtp: isSmtpConfigured(),
-  emailFrom: process.env.EMAIL_FROM?.trim() || '(default: onboarding@resend.dev)',
+  emailFrom: getResolvedFromAddress(),
   frontendUrl: process.env.FRONTEND_URL?.trim() || '(not set)',
 });
 

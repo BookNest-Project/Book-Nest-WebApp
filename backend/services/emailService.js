@@ -11,6 +11,10 @@ function getSmtpPass() {
   return (process.env.SMTP_PASS || '').replace(/\s+/g, '').trim();
 }
 
+export function isBrevoConfigured() {
+  return Boolean(process.env.BREVO_API_KEY?.trim());
+}
+
 export function isResendConfigured() {
   return Boolean(process.env.RESEND_API_KEY?.trim());
 }
@@ -25,6 +29,7 @@ export function isSmtpConfigured() {
 
 /** Preferred transport for production (Railway blocks SMTP on most plans). */
 export function getEmailTransportMode() {
+  if (isBrevoConfigured()) return 'brevo';
   if (isResendConfigured()) return 'resend';
   if (isSmtpConfigured()) return 'smtp';
   if (process.env.NODE_ENV !== 'production' || process.env.AUTH_RELAX_EMAIL_LIMITS === 'true') {
@@ -60,17 +65,82 @@ function getTransporter() {
   return transporter;
 }
 
-function getFromAddress() {
-  if (process.env.EMAIL_FROM?.trim()) {
-    return process.env.EMAIL_FROM.trim();
+const RESEND_SANDBOX_FROM = 'BookNest <onboarding@resend.dev>';
+
+/** Domains that cannot be used as Resend "from" — must use onboarding@resend.dev or your own verified domain. */
+const RESEND_BLOCKED_FROM_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'icloud.com',
+  'me.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+]);
+
+function extractEmailAddress(fromHeader) {
+  const trimmed = fromHeader.trim();
+  const match = trimmed.match(/<([^>]+)>/);
+  return (match ? match[1] : trimmed).trim().toLowerCase();
+}
+
+function isValidResendFrom(fromHeader) {
+  const email = extractEmailAddress(fromHeader);
+  if (email === 'onboarding@resend.dev') return true;
+  const domain = email.split('@')[1];
+  if (!domain) return false;
+  return !RESEND_BLOCKED_FROM_DOMAINS.has(domain);
+}
+
+function parseSender(fromHeader) {
+  const trimmed = fromHeader.trim();
+  const match = trimmed.match(/^(.+?)\s*<([^>]+)>$/);
+  if (match) {
+    return { name: match[1].trim(), email: match[2].trim() };
   }
+  return { name: 'BookNest', email: trimmed };
+}
+
+function getFromAddress() {
+  const configured = process.env.EMAIL_FROM?.trim();
+  const brevoSender = process.env.BREVO_SENDER_EMAIL?.trim();
+
+  if (isBrevoConfigured()) {
+    if (configured) return configured;
+    if (brevoSender) return `BookNest <${brevoSender}>`;
+    logger.warn('Brevo configured but EMAIL_FROM / BREVO_SENDER_EMAIL missing');
+    return 'BookNest <noreply@booknest.app>';
+  }
+
   if (isResendConfigured()) {
-    return 'BookNest <onboarding@resend.dev>';
+    if (configured && isValidResendFrom(configured)) {
+      return configured;
+    }
+    if (configured) {
+      logger.warn('EMAIL_FROM cannot be used with Resend — using onboarding@resend.dev', {
+        configured,
+        hint: 'Remove EMAIL_FROM on Railway or set EMAIL_FROM=BookNest <onboarding@resend.dev>',
+      });
+    }
+    return RESEND_SANDBOX_FROM;
+  }
+
+  if (configured) {
+    return configured;
   }
   if (process.env.SMTP_USER?.trim()) {
     return `BookNest <${process.env.SMTP_USER.trim()}>`;
   }
   return 'BookNest <noreply@booknest.app>';
+}
+
+/** For startup logs — shows the address actually used when sending. */
+export function getResolvedFromAddress() {
+  return getFromAddress();
 }
 
 function allowDevEmailLog() {
@@ -93,6 +163,53 @@ function layout(title, bodyHtml) {
     </div>
   </body>
 </html>`;
+}
+
+async function sendViaBrevo({ to, subject, html }) {
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const sender = parseSender(getFromAddress());
+
+  try {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify({
+        sender: { name: sender.name, email: sender.email },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+      }),
+    });
+
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message =
+        body?.message ||
+        body?.error ||
+        `Brevo API returned ${response.status}`;
+      logger.error('Brevo API error', {
+        to,
+        subject,
+        from: sender.email,
+        status: response.status,
+        error: message,
+      });
+      return { sent: false, error: message, via: 'brevo' };
+    }
+
+    logger.info('Email sent via Brevo', { to, subject, id: body?.messageId });
+    return { sent: true, via: 'brevo' };
+  } catch (error) {
+    logger.error('Brevo send failed', { to, subject, error: error.message });
+    return { sent: false, error: error.message, via: 'brevo' };
+  }
 }
 
 async function sendViaResend({ to, subject, html }) {
@@ -142,11 +259,22 @@ async function sendViaSmtp({ to, subject, html }) {
   } catch (error) {
     const hint =
       error.code === 'ETIMEDOUT' || error.message?.includes('timeout')
-        ? ' (Railway blocks Gmail SMTP on most plans — set RESEND_API_KEY instead)'
+        ? ' (Railway blocks Gmail SMTP on most plans — set BREVO_API_KEY instead)'
         : '';
     logger.error('SMTP send error', { to, subject, error: error.message, code: error.code });
     return { sent: false, error: `${error.message}${hint}` };
   }
+}
+
+function mapBrevoError(message) {
+  const lower = (message || '').toLowerCase();
+  if (lower.includes('sender') && (lower.includes('not valid') || lower.includes('verify'))) {
+    return `${message} In Brevo go to Settings → Senders and verify ${parseSender(getFromAddress()).email}.`;
+  }
+  if (lower.includes('unauthorized') || lower.includes('api key')) {
+    return `${message} Check BREVO_API_KEY on Railway.`;
+  }
+  return message;
 }
 
 function mapResendError(message) {
@@ -161,6 +289,17 @@ function mapResendError(message) {
 }
 
 async function deliverEmail({ to, subject, html, devLink }) {
+  if (isBrevoConfigured()) {
+    const brevoResult = await sendViaBrevo({ to, subject, html });
+    if (brevoResult?.sent) return brevoResult;
+    if (brevoResult) {
+      return {
+        ...brevoResult,
+        error: mapBrevoError(brevoResult.error),
+      };
+    }
+  }
+
   if (isResendConfigured()) {
     const resendResult = await sendViaResend({ to, subject, html });
     if (resendResult?.sent) return resendResult;
@@ -194,7 +333,7 @@ async function deliverEmail({ to, subject, html, devLink }) {
   return {
     sent: false,
     error:
-      'Email service is not configured. On Railway set RESEND_API_KEY (recommended) or use SMTP on a Pro plan.',
+      'Email service is not configured. On Railway set BREVO_API_KEY (recommended) or RESEND_API_KEY.',
   };
 }
 
