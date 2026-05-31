@@ -60,18 +60,19 @@ async function deliverVerificationEmail(email, { password, isExistingUser = fals
   const redirectTo = getEmailVerificationRedirectUrl();
   let verifyLink;
 
-  try {
-    if (!isExistingUser && password) {
-      verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
-    } else {
-      verifyLink = await generateAuthLink('signup', email, { redirectTo });
-    }
-  } catch (signupError) {
-    logger.warn('Signup verification link failed, trying magic link', {
-      email,
-      error: signupError.message,
-    });
+  // Existing accounts: magiclink avoids Supabase "Database error finding user" on signup links
+  if (isExistingUser) {
     verifyLink = await generateAuthLink('magiclink', email, { redirectTo });
+  } else {
+    try {
+      verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
+    } catch (signupError) {
+      logger.warn('Signup verification link failed, trying magic link', {
+        email,
+        error: signupError.message,
+      });
+      verifyLink = await generateAuthLink('magiclink', email, { redirectTo });
+    }
   }
 
   const result = await sendVerificationEmail(email, verifyLink);
@@ -99,28 +100,23 @@ export const authRepository = {
     return !!(authUser?.email_confirmed_at || authUser?.confirmed_at);
   },
 
-  async findAuthUserByEmail(email) {
-    const normalized = email.trim().toLowerCase();
-    let page = 1;
-    const perPage = 200;
-
-    while (page <= 20) {
-      const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
-      if (error) {
-        logger.error('listUsers failed', { email: normalized, error: error.message });
-        throw error;
-      }
-
-      const match = (data?.users || []).find(
-        (u) => u.email?.trim().toLowerCase() === normalized
-      );
-      if (match) return match;
-
-      if (!data?.users?.length || data.users.length < perPage) break;
-      page += 1;
+  async getAuthUserById(userId) {
+    if (!userId) return null;
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (error) {
+      logger.warn('getUserById failed', { userId, error: error.message });
+      return null;
     }
+    return data?.user ?? null;
+  },
 
-    return null;
+  /**
+   * Look up auth user via public.users (same id) — avoids listUsers which can fail on Supabase.
+   */
+  async findAuthUserByEmail(email) {
+    const dbUser = await userRepository.findByEmail(email.trim().toLowerCase());
+    if (!dbUser?.id) return null;
+    return this.getAuthUserById(dbUser.id);
   },
 
   async ensurePublicUserRecord(authUser) {
