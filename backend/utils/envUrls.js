@@ -2,6 +2,9 @@
  * Normalize env URLs for Chapa (requires absolute https URLs in production).
  */
 
+/** Stable production frontend — also listed in index.js CORS allowlist */
+const DEFAULT_PRODUCTION_FRONTEND = 'https://book-nest-frontend-v2-main.vercel.app';
+
 const PLACEHOLDER_HOST_PATTERNS = [
   /^your-vercel-frontend-url/i,
   /^your-app/i,
@@ -68,11 +71,7 @@ function warnIfPreviewHost(baseUrl, envName) {
 
   const message =
     `${envName} looks like a Vercel preview deployment ("${host}"). ` +
-    'Use your stable production URL or Chapa will redirect to DEPLOYMENT_NOT_FOUND.';
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(message);
-  }
+    'Prefer your stable production URL for Chapa return_url to avoid DEPLOYMENT_NOT_FOUND.';
 
   console.warn(`⚠️ ${message}`);
 }
@@ -104,7 +103,10 @@ export function getBackendUrl() {
 
 /** Vercel / local frontend. Used for Chapa return_url after payment. */
 export function getFrontendUrl() {
-  const url = pickFirstUrl([process.env.FRONTEND_URL]);
+  const url = pickFirstUrl([
+    process.env.FRONTEND_URL,
+    process.env.NODE_ENV === 'production' ? DEFAULT_PRODUCTION_FRONTEND : null,
+  ]);
 
   if (url) {
     assertNotPlaceholderHost(url, 'FRONTEND_URL');
@@ -117,7 +119,7 @@ export function getFrontendUrl() {
   }
 
   throw new Error(
-    'FRONTEND_URL is missing or invalid. Set it to https://book-nest-frontend-v2-main.vercel.app (no trailing slash)'
+    `FRONTEND_URL is missing or invalid. Set it to ${DEFAULT_PRODUCTION_FRONTEND} (no trailing slash)`
   );
 }
 
@@ -133,9 +135,8 @@ export function logResolvedUrls(logger) {
       chapa_return: `${frontend}/checkout/result`,
     });
   } catch (err) {
-    logger.error('URL configuration error', { message: err.message });
-    if (process.env.NODE_ENV === 'production') {
-      throw err;
-    }
+    logger.error('URL configuration error — server will start but payments/email links may fail', {
+      message: err.message,
+    });
   }
 }
