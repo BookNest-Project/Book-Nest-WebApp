@@ -22,6 +22,7 @@ export const authController = {
           message: result.message,
           data: {
             email: result.email,
+            resumed: !!result.resumed,
             verificationEmailPending: !!result.verificationEmailPending,
           },
         });

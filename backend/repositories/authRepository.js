@@ -3,6 +3,7 @@ import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
 import { getFrontendUrl } from '../utils/envUrls.js';
+import { userRepository } from './userRepository.js';
 import {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -55,10 +56,24 @@ async function generateAuthLink(type, email, { redirectTo, password } = {}) {
   return actionLink;
 }
 
-async function deliverVerificationEmail(email, password) {
+async function deliverVerificationEmail(email, { password, isExistingUser = false } = {}) {
   const redirectTo = getEmailVerificationRedirectUrl();
-  const linkOptions = password ? { redirectTo, password } : { redirectTo };
-  const verifyLink = await generateAuthLink('signup', email, linkOptions);
+  let verifyLink;
+
+  try {
+    if (!isExistingUser && password) {
+      verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
+    } else {
+      verifyLink = await generateAuthLink('signup', email, { redirectTo });
+    }
+  } catch (signupError) {
+    logger.warn('Signup verification link failed, trying magic link', {
+      email,
+      error: signupError.message,
+    });
+    verifyLink = await generateAuthLink('magiclink', email, { redirectTo });
+  }
+
   const result = await sendVerificationEmail(email, verifyLink);
   assertEmailSent(result, 'Failed to send verification email');
   logger.info('Verification email dispatched', {
@@ -80,6 +95,74 @@ export const authRepository = {
   getEmailVerificationRedirectUrl,
   getPasswordResetRedirectUrl,
 
+  isAuthEmailVerified(authUser) {
+    return !!(authUser?.email_confirmed_at || authUser?.confirmed_at);
+  },
+
+  async findAuthUserByEmail(email) {
+    const normalized = email.trim().toLowerCase();
+    let page = 1;
+    const perPage = 200;
+
+    while (page <= 20) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+      if (error) {
+        logger.error('listUsers failed', { email: normalized, error: error.message });
+        throw error;
+      }
+
+      const match = (data?.users || []).find(
+        (u) => u.email?.trim().toLowerCase() === normalized
+      );
+      if (match) return match;
+
+      if (!data?.users?.length || data.users.length < perPage) break;
+      page += 1;
+    }
+
+    return null;
+  },
+
+  async ensurePublicUserRecord(authUser) {
+    const existing = await userRepository.findById(authUser.id);
+    if (existing) return existing;
+
+    const { error } = await supabaseAdmin.from('users').insert({
+      id: authUser.id,
+      email: authUser.email?.trim().toLowerCase(),
+      role: authUser.app_metadata?.role || 'reader',
+      account_status: 'active',
+      is_email_verified: false,
+    });
+
+    if (error && error.code !== '23505') {
+      logger.error('ensurePublicUserRecord failed', { userId: authUser.id, error: error.message });
+      throw error;
+    }
+
+    return userRepository.findById(authUser.id);
+  },
+
+  async updateUnverifiedUser(userId, password, metadata = {}) {
+    const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password,
+      user_metadata: {
+        display_name: metadata.display_name || metadata.displayName,
+        ...metadata,
+      },
+      app_metadata: {
+        role: metadata.role || 'reader',
+      },
+    });
+
+    if (error) {
+      logger.error('updateUnverifiedUser failed', { userId, error: error.message });
+      throw error;
+    }
+
+    return data.user;
+  },
+
   /**
    * Reader self-signup — creates auth user (does not send email; use sendVerificationEmailForUser).
    */
@@ -87,8 +170,8 @@ export const authRepository = {
     return this.createUser(email, password, metadata);
   },
 
-  async sendVerificationEmailForUser(email, password) {
-    await deliverVerificationEmail(email, password || undefined);
+  async sendVerificationEmailForUser(email, password, { isExistingUser = false } = {}) {
+    await deliverVerificationEmail(email, { password, isExistingUser });
   },
 
   /**

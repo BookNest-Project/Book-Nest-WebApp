@@ -18,10 +18,11 @@ export const userRepository = {
   },
 
   async findByEmail(email) {
+    const normalized = email.trim().toLowerCase();
     const { data: user, error } = await supabaseAdmin
       .from('users')
       .select('id, email, role, account_status, is_email_verified, created_at, updated_at')
-      .eq('email', email)
+      .ilike('email', normalized)
       .maybeSingle();
 
     if (error) {

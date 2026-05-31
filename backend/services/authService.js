@@ -10,9 +10,9 @@ import {
   SESSION_DURATION_REMEMBER_MS,
 } from '../utils/responseFormatter.js';
 
-async function sendVerificationOrThrow(email, password) {
+async function sendVerificationEmailSafe(email, password, { isExistingUser = false } = {}) {
   try {
-    await authRepository.sendVerificationEmailForUser(email, password);
+    await authRepository.sendVerificationEmailForUser(email, password, { isExistingUser });
     return { sent: true };
   } catch (error) {
     if (error.name === 'EMAIL_SEND_FAILED') {
@@ -23,60 +23,68 @@ async function sendVerificationOrThrow(email, password) {
   }
 }
 
+function isFullyVerified(authUser, dbUser) {
+  if (authUser && authRepository.isAuthEmailVerified(authUser)) return true;
+  if (dbUser?.is_email_verified) return true;
+  return false;
+}
+
 export const authService = {
   /**
    * Public self-registration for readers only (no invitation).
+   * If the email exists but is not verified, resume signup and resend verification.
    */
   async register(email, password, displayName) {
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedName = displayName.trim();
 
-    const existingUser = await userRepository.findByEmail(normalizedEmail);
-    if (existingUser?.is_email_verified) {
-      throw new ValidationError('Email already registered');
+    const authUser = await authRepository.findAuthUserByEmail(normalizedEmail);
+    const dbUser =
+      authUser
+        ? await userRepository.findById(authUser.id)
+        : await userRepository.findByEmail(normalizedEmail);
+
+    if (isFullyVerified(authUser, dbUser)) {
+      throw new ValidationError(
+        'This email is already registered. Sign in instead, or use forgot password if you need help.'
+      );
     }
 
-    if (await userRepository.isDisplayNameTaken(trimmedName, existingUser?.id)) {
+    const resumeUserId = authUser?.id || dbUser?.id;
+    if (await userRepository.isDisplayNameTaken(trimmedName, resumeUserId)) {
       throw new ValidationError('This display name is already taken');
     }
 
-    // Incomplete signup — resend verification instead of blocking
-    if (existingUser && !existingUser.is_email_verified) {
-      await userRepository.upsertReaderProfile(existingUser.id, trimmedName);
-      const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
-      if (!emailResult.sent) {
-        throw new ValidationError(
-          'Your account exists but we could not send the verification email. Use resend verification or try again shortly.'
-        );
-      }
-      return {
-        message: 'Verification email sent. Please check your inbox.',
-        email: normalizedEmail,
-      };
-    }
+    let userId;
+    let resumed = false;
 
-    let authUser;
-    try {
-      authUser = await authRepository.signUpReader(normalizedEmail, password, {
+    if (authUser && !authRepository.isAuthEmailVerified(authUser)) {
+      await authRepository.updateUnverifiedUser(authUser.id, password, {
         display_name: trimmedName,
         role: 'reader',
       });
-    } catch (error) {
-      if (error.message === 'EMAIL_ALREADY_REGISTERED') {
-        const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
-        if (emailResult.sent) {
-          return {
-            message: 'Verification email sent. Please check your inbox.',
-            email: normalizedEmail,
-          };
-        }
-        throw new ValidationError('Email already registered. Try resend verification from the login page.');
-      }
-      throw error;
+      await authRepository.ensurePublicUserRecord(authUser);
+      userId = authUser.id;
+      resumed = true;
+      logger.info('Resuming incomplete registration', { userId, email: normalizedEmail });
+    } else if (dbUser && !dbUser.is_email_verified) {
+      userId = dbUser.id;
+      resumed = true;
+      logger.info('Resuming incomplete registration from public profile', {
+        userId,
+        email: normalizedEmail,
+      });
+    } else {
+      const newAuthUser = await authRepository.signUpReader(normalizedEmail, password, {
+        display_name: trimmedName,
+        role: 'reader',
+      });
+      userId = newAuthUser.id;
+      await authRepository.ensurePublicUserRecord(newAuthUser);
     }
 
     try {
-      await userRepository.upsertReaderProfile(authUser.id, trimmedName);
+      await userRepository.upsertReaderProfile(userId, trimmedName);
     } catch (error) {
       if (error.message === 'DISPLAY_NAME_TAKEN') {
         throw new ValidationError('This display name is already taken');
@@ -84,25 +92,33 @@ export const authService = {
       throw error;
     }
 
-    const emailResult = await sendVerificationOrThrow(normalizedEmail, password);
+    const emailResult = await sendVerificationEmailSafe(normalizedEmail, password, {
+      isExistingUser: resumed,
+    });
+
     if (!emailResult.sent) {
-      logger.warn('Account created but verification email failed', {
-        userId: authUser.id,
-        email: normalizedEmail,
-      });
       return {
         message:
-          'Account created. We could not send the verification email right now — use resend verification on the login page.',
+          resumed
+            ? 'We updated your signup details but could not send the verification email. Use resend verification below.'
+            : 'Account created. We could not send the verification email right now — use resend verification on the next screen.',
         email: normalizedEmail,
+        resumed,
         verificationEmailPending: true,
       };
     }
 
-    logger.info('Reader registered successfully', { userId: authUser.id, email: normalizedEmail });
+    logger.info(resumed ? 'Registration resumed' : 'Reader registered successfully', {
+      userId,
+      email: normalizedEmail,
+    });
 
     return {
-      message: 'Verification email sent. Please check your inbox.',
+      message: resumed
+        ? 'You already started signing up — we sent a fresh verification email. Check your inbox.'
+        : 'Verification email sent. Please check your inbox.',
       email: normalizedEmail,
+      resumed,
     };
   },
 
@@ -186,7 +202,11 @@ export const authService = {
       throw new ValidationError('Invalid or expired verification link. Please request a new one.');
     }
 
-    const dbUser = await userRepository.findByEmail(authUser.email);
+    let dbUser = await userRepository.findByEmail(authUser.email);
+    if (!dbUser) {
+      await authRepository.ensurePublicUserRecord(authUser);
+      dbUser = await userRepository.findByEmail(authUser.email);
+    }
     if (!dbUser) {
       throw new ValidationError('Account not found. Please register again.');
     }
@@ -205,13 +225,18 @@ export const authService = {
   },
 
   async forgotPassword(email) {
-    const user = await userRepository.findByEmail(email);
-    if (!user) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const authUser = await authRepository.findAuthUserByEmail(normalizedEmail);
+    const user = authUser
+      ? await userRepository.findById(authUser.id)
+      : await userRepository.findByEmail(normalizedEmail);
+
+    if (!authUser && !user) {
       throw new NotFoundError('No account found with this email');
     }
 
     try {
-      await authRepository.sendPasswordResetEmail(email);
+      await authRepository.sendPasswordResetEmail(normalizedEmail);
     } catch (error) {
       if (error.name === 'EMAIL_SEND_FAILED') {
         throw new ValidationError(error.message);
@@ -219,7 +244,7 @@ export const authService = {
       throw error;
     }
 
-    logger.info('Password reset email sent', { email, userId: user.id });
+    logger.info('Password reset email sent', { email: normalizedEmail, userId: user?.id });
 
     return { message: 'Password reset link sent. Check your inbox.' };
   },
@@ -242,16 +267,22 @@ export const authService = {
 
   async resendVerification(email) {
     const normalizedEmail = email.trim().toLowerCase();
-    const user = await userRepository.findByEmail(normalizedEmail);
-    if (!user) {
+    const authUser = await authRepository.findAuthUserByEmail(normalizedEmail);
+
+    if (!authUser) {
       throw new ValidationError('No account found with this email');
     }
 
-    if (user.is_email_verified) {
-      throw new ValidationError('Email already verified. Please login.');
+    if (authRepository.isAuthEmailVerified(authUser)) {
+      throw new ValidationError('Email already verified. Please sign in.');
     }
 
-    const emailResult = await sendVerificationOrThrow(normalizedEmail);
+    await authRepository.ensurePublicUserRecord(authUser);
+
+    const emailResult = await sendVerificationEmailSafe(normalizedEmail, undefined, {
+      isExistingUser: true,
+    });
+
     if (!emailResult.sent) {
       throw new ValidationError(
         emailResult.error ||
@@ -259,7 +290,7 @@ export const authService = {
       );
     }
 
-    logger.info('Verification email resent', { email: normalizedEmail, userId: user.id });
+    logger.info('Verification email resent', { email: normalizedEmail, userId: authUser.id });
 
     return { message: 'Verification email resent. Please check your inbox.' };
   },
