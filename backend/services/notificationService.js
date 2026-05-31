@@ -98,6 +98,46 @@ export const notificationService = {
     }
   },
 
+  async notifyFollowersOfNewPost(authorId, authorName) {
+    if (!ensureVapid()) return { sent: 0, skipped: true };
+
+    const { data: followers, error } = await supabaseAdmin
+      .from('follows')
+      .select('follower_id')
+      .eq('following_id', authorId);
+
+    if (error || !followers?.length) return { sent: 0 };
+
+    let sent = 0;
+    const body = `${authorName} shared a new post on BookNest.`;
+
+    for (const { follower_id: followerId } of followers) {
+      const { data: prefs } = await supabaseAdmin
+        .from('user_settings')
+        .select('push_notifications')
+        .eq('user_id', followerId)
+        .maybeSingle();
+
+      if (prefs && prefs.push_notifications === false) continue;
+
+      const { data: subs } = await supabaseAdmin
+        .from('push_subscriptions')
+        .select('endpoint, p256dh, auth')
+        .eq('user_id', followerId);
+
+      for (const sub of subs || []) {
+        const ok = await this.sendPush(sub, {
+          title: 'New post from someone you follow',
+          body,
+          url: '/community',
+        });
+        if (ok) sent += 1;
+      }
+    }
+
+    return { sent };
+  },
+
   async sendStreakReminders() {
     if (!ensureVapid()) return { sent: 0, skipped: true };
 

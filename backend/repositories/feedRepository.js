@@ -2,40 +2,155 @@ import { followRepository } from '../repositories/followRepository.js';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
 
+const POST_SELECT = `
+  id,
+  content,
+  image_url,
+  status,
+  like_count,
+  comment_count,
+  share_count,
+  created_at,
+  user:users!user_id (
+    id,
+    email,
+    role,
+    avatar_url,
+    bio
+  )
+`;
+
+async function loadTagsForPosts(postIds) {
+  if (!postIds.length) return new Map();
+
+  const { data: tags } = await supabaseAdmin
+    .from('post_tags')
+    .select('post_id, tag_type, tag_id')
+    .in('post_id', postIds);
+
+  const userIds = [...new Set((tags || []).filter((t) => t.tag_type === 'user').map((t) => t.tag_id))];
+  const bookIds = [...new Set((tags || []).filter((t) => t.tag_type === 'book').map((t) => t.tag_id))];
+
+  const usersMap = {};
+  const booksMap = {};
+
+  if (userIds.length) {
+    const { data: users } = await supabaseAdmin
+      .from('users')
+      .select('id, email, avatar_url, role')
+      .in('id', userIds);
+    for (const u of users || []) {
+      usersMap[u.id] = {
+        id: u.id,
+        type: 'user',
+        name: u.email.split('@')[0],
+        username: u.email.split('@')[0],
+        avatarUrl: u.avatar_url,
+      };
+    }
+  }
+
+  if (bookIds.length) {
+    const { data: books } = await supabaseAdmin
+      .from('books')
+      .select('id, title, cover_url')
+      .in('id', bookIds);
+    for (const b of books || []) {
+      booksMap[b.id] = {
+        id: b.id,
+        type: 'book',
+        title: b.title,
+        coverUrl: b.cover_url,
+      };
+    }
+  }
+
+  const byPost = new Map();
+  for (const tag of tags || []) {
+    if (!byPost.has(tag.post_id)) byPost.set(tag.post_id, []);
+    const item =
+      tag.tag_type === 'user' ? usersMap[tag.tag_id] : booksMap[tag.tag_id];
+    if (item) byPost.get(tag.post_id).push(item);
+  }
+  return byPost;
+}
+
+function formatPostRow(post, likesMap = {}, tagsMap = new Map()) {
+  const user = Array.isArray(post.user) ? post.user[0] : post.user;
+  return {
+    id: post.id,
+    content: post.content,
+    imageUrl: post.image_url,
+    status: post.status,
+    likeCount: post.like_count || 0,
+    commentCount: post.comment_count || 0,
+    shareCount: post.share_count || 0,
+    createdAt: post.created_at,
+    isLiked: !!likesMap[post.id],
+    tags: tagsMap.get(post.id) || [],
+    author: {
+      id: user?.id,
+      name: user?.email?.split('@')[0] || 'User',
+      username: user?.email?.split('@')[0] || 'user',
+      avatarUrl: user?.avatar_url,
+      role: user?.role || 'reader',
+    },
+  };
+}
+
+async function formatPostsList(posts, viewerUserId) {
+  const postIds = (posts || []).map((p) => p.id);
+  let likesMap = {};
+
+  if (viewerUserId && postIds.length) {
+    const { data: likes } = await supabaseAdmin
+      .from('likes')
+      .select('target_id')
+      .eq('user_id', viewerUserId)
+      .eq('target_type', 'post')
+      .in('target_id', postIds);
+
+    likesMap = (likes || []).reduce((acc, like) => {
+      acc[like.target_id] = true;
+      return acc;
+    }, {});
+  }
+
+  const tagsMap = await loadTagsForPosts(postIds);
+  return (posts || []).map((post) => formatPostRow(post, likesMap, tagsMap));
+}
+
+async function savePostTags(postId, taggedUsers = [], taggedBooks = []) {
+  await supabaseAdmin.from('post_tags').delete().eq('post_id', postId);
+
+  const rows = [
+    ...taggedUsers.map((id) => ({ post_id: postId, tag_type: 'user', tag_id: id })),
+    ...taggedBooks.map((id) => ({ post_id: postId, tag_type: 'book', tag_id: id })),
+  ];
+
+  if (rows.length) {
+    const { error } = await supabaseAdmin.from('post_tags').insert(rows);
+    if (error) throw error;
+  }
+}
+
 export const feedRepository = {
   async getFeed(userId, page = 1, limit = 20) {
     try {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
-      // Get posts from users the current user follows + own posts
       const { data: following } = await supabaseAdmin
         .from('follows')
         .select('following_id')
         .eq('follower_id', userId);
 
-      const followingIds = following?.map(f => f.following_id) || [];
+      const followingIds = following?.map((f) => f.following_id) || [];
       const allUserIds = [...followingIds, userId];
 
       const { data: posts, error, count } = await supabaseAdmin
         .from('posts')
-        .select(`
-          id,
-          content,
-          image_url,
-          status,
-          like_count,
-          comment_count,
-          share_count,
-          created_at,
-          user:users!user_id (
-            id,
-            email,
-            role,
-            avatar_url,
-            bio
-          )
-        `, { count: 'exact' })
+        .select(POST_SELECT, { count: 'exact' })
         .in('user_id', allUserIds)
         .eq('status', 'published')
         .order('created_at', { ascending: false })
@@ -43,41 +158,7 @@ export const feedRepository = {
 
       if (error) throw error;
 
-      // Get likes for current user
-      const postIds = posts.map(p => p.id);
-      let likesMap = {};
-      
-      if (postIds.length > 0) {
-        const { data: likes } = await supabaseAdmin
-          .from('likes')
-          .select('target_id')
-          .eq('user_id', userId)
-          .eq('target_type', 'post')
-          .in('target_id', postIds);
-        
-        likesMap = likes?.reduce((acc, like) => {
-          acc[like.target_id] = true;
-          return acc;
-        }, {}) || {};
-      }
-
-      const formattedPosts = posts.map(post => ({
-        id: post.id,
-        content: post.content,
-        imageUrl: post.image_url,
-        likeCount: post.like_count,
-        commentCount: post.comment_count,
-        shareCount: post.share_count,
-        createdAt: post.created_at,
-        isLiked: !!likesMap[post.id],
-        author: {
-          id: post.user.id,
-          name: post.user.email.split('@')[0],
-          username: post.user.email.split('@')[0],
-          avatarUrl: post.user.avatar_url,
-          role: post.user.role,
-        },
-      }));
+      const formattedPosts = await formatPostsList(posts, userId);
 
       return {
         posts: formattedPosts,
@@ -92,30 +173,14 @@ export const feedRepository = {
     }
   },
 
-  async getUserPosts(userId, includeDrafts = false, page = 1, limit = 20) {
+  async getUserPosts(userId, includeDrafts = false, page = 1, limit = 20, viewerUserId = null) {
     try {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
       let query = supabaseAdmin
         .from('posts')
-        .select(`
-          id,
-          content,
-          image_url,
-          status,
-          like_count,
-          comment_count,
-          share_count,
-          created_at,
-          user:users!user_id (
-            id,
-            email,
-            role,
-            avatar_url,
-            bio
-          )
-        `, { count: 'exact' })
+        .select(POST_SELECT, { count: 'exact' })
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .range(from, to);
@@ -125,11 +190,12 @@ export const feedRepository = {
       }
 
       const { data: posts, error, count } = await query;
-
       if (error) throw error;
 
+      const formattedPosts = await formatPostsList(posts, viewerUserId || userId);
+
       return {
-        posts,
+        posts: formattedPosts,
         total: count || 0,
         page,
         limit,
@@ -172,22 +238,7 @@ export const feedRepository = {
 
       const { data: posts, error, count } = await supabaseAdmin
         .from('posts')
-        .select(`
-          id,
-          content,
-          image_url,
-          status,
-          like_count,
-          comment_count,
-          share_count,
-          created_at,
-          user:users!user_id (
-            id,
-            email,
-            role,
-            avatar_url
-          )
-        `, { count: 'exact' })
+        .select(POST_SELECT, { count: 'exact' })
         .eq('user_id', targetUserId)
         .eq('status', 'published')
         .order('created_at', { ascending: false })
@@ -195,38 +246,7 @@ export const feedRepository = {
 
       if (error) throw error;
 
-      const postIds = (posts || []).map((p) => p.id);
-      let likesMap = {};
-      if (viewerUserId && postIds.length > 0) {
-        const { data: likes } = await supabaseAdmin
-          .from('likes')
-          .select('target_id')
-          .eq('user_id', viewerUserId)
-          .eq('target_type', 'post')
-          .in('target_id', postIds);
-        likesMap = (likes || []).reduce((acc, like) => {
-          acc[like.target_id] = true;
-          return acc;
-        }, {});
-      }
-
-      const formattedPosts = (posts || []).map((post) => ({
-        id: post.id,
-        content: post.content,
-        imageUrl: post.image_url,
-        likeCount: post.like_count,
-        commentCount: post.comment_count,
-        shareCount: post.share_count,
-        createdAt: post.created_at,
-        isLiked: !!likesMap[post.id],
-        author: {
-          id: post.user.id,
-          name: post.user.email.split('@')[0],
-          username: post.user.email.split('@')[0],
-          avatarUrl: post.user.avatar_url,
-          role: post.user.role,
-        },
-      }));
+      const formattedPosts = await formatPostsList(posts, viewerUserId);
 
       return {
         posts: formattedPosts,
@@ -241,7 +261,19 @@ export const feedRepository = {
     }
   },
 
-  async createPost(userId, content, imageUrl, status = 'published') {
+  async getPostById(postId, viewerUserId = null) {
+    const { data: post, error } = await supabaseAdmin
+      .from('posts')
+      .select(POST_SELECT)
+      .eq('id', postId)
+      .single();
+
+    if (error) throw error;
+    const [formatted] = await formatPostsList([post], viewerUserId);
+    return formatted;
+  },
+
+  async createPost(userId, content, imageUrl, status = 'published', tags = {}) {
     try {
       const { data, error } = await supabaseAdmin
         .from('posts')
@@ -251,20 +283,27 @@ export const feedRepository = {
           image_url: imageUrl,
           status,
         })
-        .select()
+        .select(POST_SELECT)
         .single();
 
       if (error) throw error;
-      return data;
+
+      await savePostTags(
+        data.id,
+        tags.tagged_users || [],
+        tags.tagged_books || []
+      );
+
+      const [formatted] = await formatPostsList([data], userId);
+      return formatted;
     } catch (error) {
       logger.error('Create post error', { error: error.message });
       throw error;
     }
   },
 
-  async updatePost(postId, userId, updates) {
+  async updatePost(postId, userId, updates, tags) {
     try {
-      // Verify ownership
       const { data: existing, error: checkError } = await supabaseAdmin
         .from('posts')
         .select('user_id')
@@ -276,20 +315,26 @@ export const feedRepository = {
         throw new Error('Unauthorized');
       }
 
+      const patch = { updated_at: new Date().toISOString() };
+      if (updates.content !== undefined) patch.content = updates.content;
+      if (updates.image_url !== undefined) patch.image_url = updates.image_url;
+      if (updates.status !== undefined) patch.status = updates.status;
+
       const { data, error } = await supabaseAdmin
         .from('posts')
-        .update({
-          content: updates.content,
-          image_url: updates.image_url,
-          status: updates.status,
-          updated_at: new Date().toISOString(),
-        })
+        .update(patch)
         .eq('id', postId)
-        .select()
+        .select(POST_SELECT)
         .single();
 
       if (error) throw error;
-      return data;
+
+      if (tags) {
+        await savePostTags(postId, tags.tagged_users || [], tags.tagged_books || []);
+      }
+
+      const [formatted] = await formatPostsList([data], userId);
+      return formatted;
     } catch (error) {
       logger.error('Update post error', { error: error.message });
       throw error;
@@ -298,7 +343,6 @@ export const feedRepository = {
 
   async deletePost(postId, userId) {
     try {
-      // Verify ownership
       const { data: existing, error: checkError } = await supabaseAdmin
         .from('posts')
         .select('user_id')
@@ -310,11 +354,7 @@ export const feedRepository = {
         throw new Error('Unauthorized');
       }
 
-      const { error } = await supabaseAdmin
-        .from('posts')
-        .delete()
-        .eq('id', postId);
-
+      const { error } = await supabaseAdmin.from('posts').delete().eq('id', postId);
       if (error) throw error;
       return { success: true };
     } catch (error) {
@@ -323,23 +363,87 @@ export const feedRepository = {
     }
   },
 
-  async saveDraft(userId, content, imageUrl) {
-    return await feedRepository.createPost(userId, content, imageUrl, 'draft');
+  async saveDraft(userId, content, imageUrl, tags = {}) {
+    return feedRepository.createPost(userId, content, imageUrl, 'draft', tags);
   },
 
   async publishDraft(postId, userId) {
-    return await feedRepository.updatePost(postId, userId, { status: 'published' });
+    const { data: existing, error: checkError } = await supabaseAdmin
+      .from('posts')
+      .select('user_id, status, content, image_url')
+      .eq('id', postId)
+      .single();
+
+    if (checkError) throw checkError;
+    if (existing.user_id !== userId) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (existing.status !== 'draft') {
+      const err = new Error('Only drafts can be published');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!existing.content?.trim() && !existing.image_url) {
+      const err = new Error('Add text or an image before publishing');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return feedRepository.updatePost(postId, userId, { status: 'published' });
+  },
+
+  async updateDraft(postId, userId, content, imageUrl, tags = {}) {
+    const { data: existing, error: checkError } = await supabaseAdmin
+      .from('posts')
+      .select('user_id, status')
+      .eq('id', postId)
+      .single();
+
+    if (checkError) throw checkError;
+    if (existing.user_id !== userId) {
+      const err = new Error('Unauthorized');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (existing.status !== 'draft') {
+      const err = new Error('Only drafts can be edited');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return feedRepository.updatePost(
+      postId,
+      userId,
+      { content: content?.trim() || '', image_url: imageUrl ?? null },
+      tags
+    );
+  },
+
+  async incrementShareCount(postId) {
+    const { data: post } = await supabaseAdmin
+      .from('posts')
+      .select('share_count')
+      .eq('id', postId)
+      .single();
+
+    const next = (post?.share_count || 0) + 1;
+    await supabaseAdmin
+      .from('posts')
+      .update({ share_count: next, updated_at: new Date().toISOString() })
+      .eq('id', postId);
+
+    return next;
   },
 
   async likePost(userId, postId) {
     try {
-      const { error } = await supabaseAdmin
-        .from('likes')
-        .insert({
-          user_id: userId,
-          target_type: 'post',
-          target_id: postId,
-        });
+      const { error } = await supabaseAdmin.from('likes').insert({
+        user_id: userId,
+        target_type: 'post',
+        target_id: postId,
+      });
 
       if (error && error.code !== '23505') throw error;
       return { error: error?.code === '23505' ? null : error };

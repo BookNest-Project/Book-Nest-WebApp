@@ -213,6 +213,41 @@ export const fileUploadService = {
   },
 
   /**
+   * Upload community post image to booknest/post-images/
+   */
+  async uploadPostImage(file, userId) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      throw new Error('Invalid image type. Allowed: JPEG, PNG, WEBP');
+    }
+    if (file.size > MAX_IMAGE_SIZE) {
+      throw new Error(`Image too large. Max size: ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
+    }
+
+    const fileExt = file.originalname.split('.').pop()?.toLowerCase() || 'jpg';
+    const fileName = `${userId}-${uuidv4()}.${fileExt}`;
+    const filePath = `post-images/${fileName}`;
+
+    const { error } = await supabaseAdmin.storage
+      .from('booknest')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+      });
+
+    if (error) {
+      logger.error('Post image upload error', { error: error.message, userId });
+      throw new Error('Failed to upload post image');
+    }
+
+    const { data: urlData } = supabaseAdmin.storage.from('booknest').getPublicUrl(filePath);
+
+    return {
+      path: filePath,
+      url: urlData.publicUrl,
+    };
+  },
+
+  /**
    * Delete a file from storage
    */
   async deleteFile(filePath) {

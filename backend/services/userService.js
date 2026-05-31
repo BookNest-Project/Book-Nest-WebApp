@@ -221,4 +221,72 @@ export const userService = {
 
     return formattedUsers;
   },
+
+  async searchCommunityUsers(query, currentUserId) {
+    if (!query || query.length < 2) return [];
+
+    const qLike = `%${String(query).trim()}%`;
+    const results = new Map();
+
+    const addUser = (user) => {
+      if (!user?.id || user.id === currentUserId || results.has(user.id)) return;
+      results.set(user.id, user);
+    };
+
+    const { data: byEmail } = await supabaseAdmin
+      .from('users')
+      .select('id, email, avatar_url, role')
+      .ilike('email', qLike)
+      .neq('id', currentUserId)
+      .limit(15);
+
+    for (const u of byEmail || []) {
+      addUser({
+        id: u.id,
+        name: u.email.split('@')[0],
+        email: u.email,
+        avatarUrl: u.avatar_url,
+        role: u.role,
+        username: u.email.split('@')[0],
+      });
+    }
+
+    const { data: readers } = await supabaseAdmin
+      .from('reader_profiles')
+      .select('display_name, user_id, users!inner(id, email, avatar_url, role)')
+      .ilike('display_name', qLike)
+      .neq('user_id', currentUserId)
+      .limit(10);
+
+    for (const row of readers || []) {
+      addUser({
+        id: row.user_id,
+        name: row.display_name,
+        email: row.users?.email,
+        avatarUrl: row.users?.avatar_url,
+        role: row.users?.role,
+        username: row.users?.email?.split('@')[0],
+      });
+    }
+
+    const { data: authors } = await supabaseAdmin
+      .from('author_profiles')
+      .select('pen_name, user_id, users!inner(id, email, avatar_url, role)')
+      .ilike('pen_name', qLike)
+      .neq('user_id', currentUserId)
+      .limit(10);
+
+    for (const row of authors || []) {
+      addUser({
+        id: row.user_id,
+        name: row.pen_name,
+        email: row.users?.email,
+        avatarUrl: row.users?.avatar_url,
+        role: row.users?.role,
+        username: row.users?.email?.split('@')[0],
+      });
+    }
+
+    return [...results.values()].slice(0, 20);
+  },
 };

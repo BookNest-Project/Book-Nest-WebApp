@@ -384,7 +384,7 @@ export const profileRepository = {
           logger.warn('Public profile counts unavailable', { error: countError.message, userId: user.id });
         }
 
-        if (settings?.show_reading_stats !== false) {
+        if (settings?.show_reading_stats !== false && user.role === 'reader') {
           try {
             publicProfile.readingStats = await this.getReadingStatsSummary(user.id);
             publicProfile.achievements = await this.getAchievementsSummary(user.id);
