@@ -177,6 +177,42 @@ export const fileUploadService = {
   },
 
   /**
+   * Upload user avatar to booknest/avatars/
+   */
+  async uploadAvatar(file, userId) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      throw new Error('Invalid image type. Allowed: JPEG, PNG, WEBP');
+    }
+    if (file.size > MAX_IMAGE_SIZE) {
+      throw new Error(`Image too large. Max size: ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
+    }
+
+    const fileExt = file.originalname.split('.').pop()?.toLowerCase() || 'jpg';
+    const fileName = `${userId}-${uuidv4()}.${fileExt}`;
+    const filePath = `avatars/${fileName}`;
+
+    const { error } = await supabaseAdmin.storage
+      .from('booknest')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (error) {
+      logger.error('Avatar upload error', { error: error.message, userId });
+      throw new Error('Failed to upload avatar');
+    }
+
+    const { data: urlData } = supabaseAdmin.storage.from('booknest').getPublicUrl(filePath);
+
+    return {
+      path: filePath,
+      url: urlData.publicUrl,
+    };
+  },
+
+  /**
    * Delete a file from storage
    */
   async deleteFile(filePath) {

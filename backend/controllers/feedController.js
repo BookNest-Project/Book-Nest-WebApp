@@ -34,6 +34,28 @@ export const feedController = {
     }
   },
 
+  async getUserPublicPosts(req, res, next) {
+    try {
+      const { userId } = req.params;
+      const viewerId = req.user?.id || null;
+      const { page = 1, limit = 20 } = req.query;
+
+      const result = await feedRepository.getPublicUserPosts(
+        userId,
+        viewerId,
+        parseInt(page, 10),
+        parseInt(limit, 10)
+      );
+
+      res.status(200).json(formatSuccess(result, 'User posts retrieved'));
+    } catch (error) {
+      if (error.statusCode === 403) {
+        return res.status(403).json({ success: false, error: { message: error.message } });
+      }
+      next(error);
+    }
+  },
+
   async createPost(req, res, next) {
     try {
       const userId = req.user.id;

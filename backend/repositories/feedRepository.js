@@ -1,3 +1,4 @@
+import { followRepository } from '../repositories/followRepository.js';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
 
@@ -136,6 +137,106 @@ export const feedRepository = {
       };
     } catch (error) {
       logger.error('Get user posts error', { error: error.message });
+      throw error;
+    }
+  },
+
+  async getPublicUserPosts(targetUserId, viewerUserId = null, page = 1, limit = 20) {
+    try {
+      const isOwnProfile = viewerUserId === targetUserId;
+      let canView = isOwnProfile;
+
+      if (!canView) {
+        const { data: settings } = await supabaseAdmin
+          .from('user_settings')
+          .select('is_public')
+          .eq('user_id', targetUserId)
+          .maybeSingle();
+
+        const isPublic = settings?.is_public !== false;
+        if (isPublic) {
+          canView = true;
+        } else if (viewerUserId) {
+          canView = await followRepository.isFollowing(viewerUserId, targetUserId);
+        }
+      }
+
+      if (!canView) {
+        const err = new Error('Posts are private');
+        err.statusCode = 403;
+        throw err;
+      }
+
+      const from = (page - 1) * limit;
+      const to = from + limit - 1;
+
+      const { data: posts, error, count } = await supabaseAdmin
+        .from('posts')
+        .select(`
+          id,
+          content,
+          image_url,
+          status,
+          like_count,
+          comment_count,
+          share_count,
+          created_at,
+          user:users!user_id (
+            id,
+            email,
+            role,
+            avatar_url
+          )
+        `, { count: 'exact' })
+        .eq('user_id', targetUserId)
+        .eq('status', 'published')
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) throw error;
+
+      const postIds = (posts || []).map((p) => p.id);
+      let likesMap = {};
+      if (viewerUserId && postIds.length > 0) {
+        const { data: likes } = await supabaseAdmin
+          .from('likes')
+          .select('target_id')
+          .eq('user_id', viewerUserId)
+          .eq('target_type', 'post')
+          .in('target_id', postIds);
+        likesMap = (likes || []).reduce((acc, like) => {
+          acc[like.target_id] = true;
+          return acc;
+        }, {});
+      }
+
+      const formattedPosts = (posts || []).map((post) => ({
+        id: post.id,
+        content: post.content,
+        imageUrl: post.image_url,
+        likeCount: post.like_count,
+        commentCount: post.comment_count,
+        shareCount: post.share_count,
+        createdAt: post.created_at,
+        isLiked: !!likesMap[post.id],
+        author: {
+          id: post.user.id,
+          name: post.user.email.split('@')[0],
+          username: post.user.email.split('@')[0],
+          avatarUrl: post.user.avatar_url,
+          role: post.user.role,
+        },
+      }));
+
+      return {
+        posts: formattedPosts,
+        total: count || 0,
+        page,
+        limit,
+        totalPages: Math.ceil((count || 0) / limit),
+      };
+    } catch (error) {
+      logger.error('Get public user posts error', { error: error.message });
       throw error;
     }
   },

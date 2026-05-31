@@ -1,8 +1,10 @@
 import express from 'express';
 import { feedController } from '../controllers/feedController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authenticateOptional } from '../middleware/auth.js';
 
 const router = express.Router();
+
+router.get('/users/:userId/posts', authenticateOptional, feedController.getUserPublicPosts);
 
 router.use(authenticate);
 

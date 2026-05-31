@@ -1,5 +1,69 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
+import { followRepository } from './followRepository.js';
+
+const USER_PUBLIC_SELECT = `
+  id,
+  email,
+  role,
+  bio,
+  location,
+  website_url,
+  avatar_url,
+  created_at,
+  account_status,
+  reader_profiles:reader_profiles!user_id (
+    display_name
+  ),
+  author_profiles:author_profiles!user_id (
+    pen_name,
+    full_name
+  ),
+  publisher_profiles:publisher_profiles!user_id (
+    company_name
+  )
+`;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function pickRoleProfile(user) {
+  const reader = Array.isArray(user.reader_profiles) ? user.reader_profiles[0] : user.reader_profiles;
+  const author = Array.isArray(user.author_profiles) ? user.author_profiles[0] : user.author_profiles;
+  const publisher = Array.isArray(user.publisher_profiles) ? user.publisher_profiles[0] : user.publisher_profiles;
+  return { reader, author, publisher };
+}
+
+async function findUserForPublicProfile(slug, currentUserId) {
+  if (slug === 'me') {
+    if (!currentUserId) return { user: null, error: null };
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select(USER_PUBLIC_SELECT)
+      .eq('id', currentUserId)
+      .maybeSingle();
+    return { user: data, error };
+  }
+
+  if (UUID_RE.test(slug)) {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select(USER_PUBLIC_SELECT)
+      .eq('id', slug)
+      .maybeSingle();
+    return { user: data, error };
+  }
+
+  const { data: candidates, error } = await supabaseAdmin
+    .from('users')
+    .select(USER_PUBLIC_SELECT)
+    .ilike('email', `${slug}@%`);
+
+  if (error) return { user: null, error };
+  if (!candidates?.length) return { user: null, error: null };
+
+  const exact = candidates.find((u) => u.email.split('@')[0].toLowerCase() === slug);
+  return { user: exact || (candidates.length === 1 ? candidates[0] : null), error: null };
+}
 
 export const profileRepository = {
   async getProfile(userId) {
@@ -107,24 +171,28 @@ export const profileRepository = {
 
   async updateProfile(userId, updates) {
     try {
-      const { error } = await supabaseAdmin
-        .from('users')
-        .update({
-          bio: updates.bio,
-          location: updates.location,
-          website_url: updates.website_url,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId);
-
-      if (error) throw error;
-
-      // Update role-specific profile
       const { data: user } = await supabaseAdmin
         .from('users')
         .select('role')
         .eq('id', userId)
         .single();
+
+      const userUpdates = {
+        bio: updates.bio,
+        location: updates.location,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (user?.role === 'author' || user?.role === 'publisher') {
+        userUpdates.website_url = updates.website_url;
+      }
+
+      const { error } = await supabaseAdmin
+        .from('users')
+        .update(userUpdates)
+        .eq('id', userId);
+
+      if (error) throw error;
 
       if (user.role === 'author' && updates.pen_name) {
         await supabaseAdmin
@@ -173,8 +241,7 @@ export const profileRepository = {
           user_id: userId,
           ...settings,
           updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId);
+        });
 
       if (error) throw error;
       return { error: null };
@@ -184,54 +251,91 @@ export const profileRepository = {
     }
   },
 
-  async getPublicProfile(username) {
+  async getReadingStatsSummary(userId) {
+    const { data: stats } = await supabaseAdmin
+      .from('user_reading_stats')
+      .select('current_streak, longest_streak, total_books_completed')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const { data: dailyRows } = await supabaseAdmin
+      .from('daily_reading_stats')
+      .select('pages_read, minutes_read, seconds_read')
+      .eq('user_id', userId);
+
+    let totalPages = 0;
+    let totalMinutes = 0;
+    for (const row of dailyRows || []) {
+      totalPages += row.pages_read || 0;
+      totalMinutes += (row.minutes_read || 0) + Math.floor((row.seconds_read || 0) / 60);
+    }
+
+    return {
+      current_streak: stats?.current_streak || 0,
+      longest_streak: stats?.longest_streak || 0,
+      books_completed: stats?.total_books_completed || 0,
+      total_pages: totalPages,
+      total_minutes: totalMinutes,
+    };
+  },
+
+  async getAchievementsSummary(userId, limit = 6) {
+    const { data } = await supabaseAdmin
+      .from('user_achievements')
+      .select('achievement_id, earned_at, achievement:achievement_definitions(title, icon)')
+      .eq('user_id', userId)
+      .order('earned_at', { ascending: false })
+      .limit(limit);
+
+    return (data || []).map((row) => ({
+      id: row.achievement_id,
+      title: row.achievement?.title || row.achievement_id,
+      icon: row.achievement?.icon,
+      earned_at: row.earned_at,
+    }));
+  },
+
+  async getPublicProfile(username, currentUserId = null) {
     try {
-      // First find user by email (username is email prefix)
-      const { data: user, error: userError } = await supabaseAdmin
-        .from('users')
-        .select(`
-          id,
-          email,
-          role,
-          bio,
-          location,
-          website_url,
-          avatar_url,
-          created_at,
-          reader_profiles:reader_profiles!user_id (
-            display_name
-          ),
-          author_profiles:author_profiles!user_id (
-            pen_name,
-            full_name
-          ),
-          publisher_profiles:publisher_profiles!user_id (
-            company_name
-          )
-        `)
-        .ilike('email', `${username}%`)
-        .limit(1)
-        .single();
+      const slug = String(username || '').replace(/^@/, '').trim().toLowerCase();
+      if (!slug) {
+        const err = new Error('Profile not found');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const { user, error: userError } = await findUserForPublicProfile(slug, currentUserId);
 
       if (userError) throw userError;
+      if (!user || user.account_status !== 'active') {
+        const err = new Error('Profile not found');
+        err.statusCode = 404;
+        throw err;
+      }
 
-      // Get settings to check privacy
       const { data: settings } = await supabaseAdmin
         .from('user_settings')
-        .select('is_public')
+        .select('is_public, show_email, show_reading_stats')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
-      // If account is private, return limited info
       const isPublic = settings?.is_public !== false;
+      const isOwnProfile = currentUserId === user.id;
+      let isFollowing = false;
+      if (currentUserId && !isOwnProfile) {
+        isFollowing = await followRepository.isFollowing(currentUserId, user.id);
+      }
 
+      const canViewDetails = isOwnProfile || isPublic || isFollowing;
+
+      const { reader, author, publisher } = pickRoleProfile(user);
       let publicName = user.email.split('@')[0];
-      if (user.role === 'reader' && user.reader_profiles?.display_name) {
-        publicName = user.reader_profiles.display_name;
-      } else if (user.role === 'author' && user.author_profiles?.pen_name) {
-        publicName = user.author_profiles.pen_name;
-      } else if (user.role === 'publisher' && user.publisher_profiles?.company_name) {
-        publicName = user.publisher_profiles.company_name;
+      if (user.role === 'reader' && reader?.display_name) {
+        publicName = reader.display_name;
+      } else if (user.role === 'author' && author?.pen_name) {
+        publicName = author.pen_name;
+      } else if (user.role === 'publisher' && publisher?.company_name) {
+        publicName = publisher.company_name;
       }
 
       const publicProfile = {
@@ -240,30 +344,117 @@ export const profileRepository = {
         username: user.email.split('@')[0],
         role: user.role,
         avatarUrl: user.avatar_url,
-        bio: isPublic ? user.bio : null,
-        location: isPublic ? user.location : null,
-        website: isPublic ? user.website_url : null,
         joinedAt: user.created_at,
         isPrivate: !isPublic,
+        isFollowing,
+        isOwnProfile,
+        bio: null,
+        location: null,
+        website: null,
+        email: undefined,
+        followerCount: 0,
+        followingCount: 0,
+        postCount: 0,
+        readingStats: undefined,
+        achievements: undefined,
       };
 
-      // Get counts only if public
-      if (isPublic) {
-        const [followersCount, followingCount, postsCount] = await Promise.all([
-          supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', user.id),
-          supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('follower_id', user.id),
-          supabaseAdmin.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'published'),
-        ]);
+      if (canViewDetails) {
+        publicProfile.bio = user.bio;
+        publicProfile.location = user.location;
+        if (user.role === 'author' || user.role === 'publisher') {
+          publicProfile.website = user.website_url;
+        }
 
-        publicProfile.followerCount = followersCount.count || 0;
-        publicProfile.followingCount = followingCount.count || 0;
-        publicProfile.postCount = postsCount.count || 0;
+        if (settings?.show_email) {
+          publicProfile.email = user.email;
+        }
+
+        try {
+          const [followersCount, followingCount, postsCount] = await Promise.all([
+            supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('following_id', user.id),
+            supabaseAdmin.from('follows').select('id', { count: 'exact', head: true }).eq('follower_id', user.id),
+            supabaseAdmin.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'published'),
+          ]);
+
+          publicProfile.followerCount = followersCount.count || 0;
+          publicProfile.followingCount = followingCount.count || 0;
+          publicProfile.postCount = postsCount.count || 0;
+        } catch (countError) {
+          logger.warn('Public profile counts unavailable', { error: countError.message, userId: user.id });
+        }
+
+        if (settings?.show_reading_stats !== false) {
+          try {
+            publicProfile.readingStats = await this.getReadingStatsSummary(user.id);
+            publicProfile.achievements = await this.getAchievementsSummary(user.id);
+          } catch (statsError) {
+            logger.warn('Public profile stats unavailable', { error: statsError.message, userId: user.id });
+          }
+        }
+      } else {
+        try {
+          const followersCount = await supabaseAdmin
+            .from('follows')
+            .select('id', { count: 'exact', head: true })
+            .eq('following_id', user.id);
+          publicProfile.followerCount = followersCount.count || 0;
+        } catch (countError) {
+          logger.warn('Public profile follower count unavailable', { error: countError.message, userId: user.id });
+        }
       }
 
       return publicProfile;
     } catch (error) {
+      if (error.statusCode) throw error;
       logger.error('Get public profile error', { error: error.message });
       throw error;
     }
+  },
+
+  async deleteAccount(userId) {
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('avatar_url')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (user?.avatar_url) {
+      try {
+        const marker = '/booknest/';
+        const idx = user.avatar_url.indexOf(marker);
+        if (idx >= 0) {
+          const path = user.avatar_url.slice(idx + marker.length);
+          await supabaseAdmin.storage.from('booknest').remove([path]);
+        }
+      } catch {
+        /* ignore storage cleanup errors */
+      }
+    }
+
+    const { error: disableError } = await supabaseAdmin
+      .from('users')
+      .update({
+        account_status: 'disabled',
+        bio: null,
+        location: null,
+        website_url: null,
+        avatar_url: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (disableError) throw disableError;
+
+    try {
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+    } catch (authErr) {
+      logger.warn('Auth user delete failed (account disabled in DB)', {
+        userId,
+        error: authErr.message,
+      });
+    }
+
+    return { deleted: true };
   },
 };

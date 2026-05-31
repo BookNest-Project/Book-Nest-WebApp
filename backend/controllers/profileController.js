@@ -46,7 +46,18 @@ export const profileController = {
 
       const { url } = await fileUploadService.uploadAvatar(req.file, userId);
       const existing = await profileRepository.getProfile(userId);
-      await profileRepository.updateAvatar(userId, url, existing.avatar_url);
+      if (existing?.avatar_url) {
+        try {
+          const marker = '/booknest/';
+          const idx = existing.avatar_url.indexOf(marker);
+          if (idx >= 0) {
+            await fileUploadService.deleteFile(existing.avatar_url.slice(idx + marker.length));
+          }
+        } catch {
+          /* ignore old avatar cleanup */
+        }
+      }
+      await profileRepository.updateAvatar(userId, url);
 
       res.status(200).json(formatSuccess({ avatar_url: url }, 'Avatar updated'));
     } catch (error) {
@@ -82,7 +93,21 @@ export const profileController = {
     const profile = await profileRepository.getPublicProfile(username, currentUserId);
     res.status(200).json(formatSuccess(profile, 'Profile retrieved'));
   } catch (error) {
+    if (error.statusCode === 404) {
+      return res.status(404).json({ success: false, error: { message: error.message } });
+    }
     next(error);
   }
 },
+
+  async deleteAccount(req, res, next) {
+    try {
+      const userId = req.user.id;
+      await profileRepository.deleteAccount(userId);
+      res.clearCookie('token', { path: '/' });
+      res.status(200).json(formatSuccess({ deleted: true }, 'Account deleted'));
+    } catch (error) {
+      next(error);
+    }
+  },
 };

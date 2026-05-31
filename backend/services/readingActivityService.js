@@ -145,6 +145,7 @@ export const readingActivityService = {
 
   async recalculateStreak(userId, timezoneOffsetMinutes = 0) {
     const today = todayDateString(timezoneOffsetMinutes);
+    const yesterday = yesterdayDateString(timezoneOffsetMinutes);
 
     const { data: dailyRows, error } = await supabaseAdmin
       .from('daily_reading_stats')
@@ -160,17 +161,25 @@ export const readingActivityService = {
       (dailyRows || []).filter(rowQualifies).map((r) => r.date)
     );
 
-    let currentStreak = 0;
-    let checkDate = today;
+    const sortedDates = [...qualifyingDates].sort();
 
-    while (qualifyingDates.has(checkDate)) {
-      currentStreak += 1;
-      checkDate = addDaysToDateString(checkDate, -1);
+    // If today has no qualifying activity yet, anchor from yesterday so the
+    // streak is not lost before the calendar day ends. A streak only breaks
+    // after a full day passes with no reading/listening.
+    const streakAnchor = qualifyingDates.has(today) ? today : yesterday;
+
+    let currentStreak = 0;
+    let checkDate = streakAnchor;
+
+    if (qualifyingDates.has(streakAnchor)) {
+      while (qualifyingDates.has(checkDate)) {
+        currentStreak += 1;
+        checkDate = addDaysToDateString(checkDate, -1);
+      }
     }
 
     let longestStreak = 0;
     let run = 0;
-    const sortedDates = [...qualifyingDates].sort();
     for (let i = 0; i < sortedDates.length; i++) {
       if (i === 0) {
         run = 1;
@@ -184,7 +193,11 @@ export const readingActivityService = {
     longestStreak = Math.max(longestStreak, currentStreak);
 
     const lastReadDate =
-      currentStreak > 0 ? today : sortedDates.length ? sortedDates[sortedDates.length - 1] : null;
+      currentStreak > 0
+        ? streakAnchor
+        : sortedDates.length
+          ? sortedDates[sortedDates.length - 1]
+          : null;
 
     const { data: stats } = await supabaseAdmin
       .from('user_reading_stats')
