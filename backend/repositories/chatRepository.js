@@ -8,13 +8,13 @@ import { isUserOnline } from '../utils/presence.js';
 async function assertParticipant(chatId, userId) {
   const { data, error } = await supabaseAdmin
     .from('chat_participants')
-    .select('id')
+    .select('id, hidden_at')
     .eq('chat_id', chatId)
     .eq('user_id', userId)
     .maybeSingle();
 
   if (error) throw error;
-  if (!data) throw new Error('Not a participant');
+  if (!data || data.hidden_at) throw new Error('Not a participant');
   return true;
 }
 
@@ -92,37 +92,52 @@ export const chatRepository = {
         throw new Error('Cannot chat with yourself');
       }
 
-      const { data: user1Chats } = await supabaseAdmin
+      const { data: user2Rows } = await supabaseAdmin
         .from('chat_participants')
         .select('chat_id')
-        .eq('user_id', userId1);
+        .eq('user_id', userId2);
 
-      if (user1Chats?.length) {
-        const chatIds = user1Chats.map((p) => p.chat_id);
-        const { data: shared } = await supabaseAdmin
+      for (const row of user2Rows || []) {
+        const { data: chat } = await supabaseAdmin
+          .from('chats')
+          .select('*')
+          .eq('id', row.chat_id)
+          .eq('type', 'direct')
+          .maybeSingle();
+
+        if (!chat) continue;
+
+        const { data: user1Row } = await supabaseAdmin
           .from('chat_participants')
-          .select('chat_id')
-          .eq('user_id', userId2)
-          .in('chat_id', chatIds);
+          .select('id, hidden_at')
+          .eq('chat_id', chat.id)
+          .eq('user_id', userId1)
+          .maybeSingle();
 
-        for (const row of shared || []) {
-          const { data: chat } = await supabaseAdmin
-            .from('chats')
-            .select('*')
-            .eq('id', row.chat_id)
-            .eq('type', 'direct')
-            .maybeSingle();
-
-          if (!chat) continue;
-
-          const { count } = await supabaseAdmin
-            .from('chat_participants')
-            .select('id', { count: 'exact', head: true })
-            .eq('chat_id', chat.id);
-
-          if (count === 2) {
-            return { chat, isNew: false };
+        if (user1Row) {
+          if (user1Row.hidden_at) {
+            await supabaseAdmin
+              .from('chat_participants')
+              .update({ hidden_at: null })
+              .eq('id', user1Row.id);
           }
+          return { chat, isNew: false };
+        }
+
+        const { count } = await supabaseAdmin
+          .from('chat_participants')
+          .select('id', { count: 'exact', head: true })
+          .eq('chat_id', chat.id);
+
+        if (count === 1) {
+          const { error: rejoinError } = await supabaseAdmin
+            .from('chat_participants')
+            .upsert(
+              { chat_id: chat.id, user_id: userId1, hidden_at: null },
+              { onConflict: 'chat_id,user_id' }
+            );
+          if (rejoinError) throw rejoinError;
+          return { chat, isNew: false };
         }
       }
 
@@ -202,27 +217,31 @@ export const chatRepository = {
       .eq('chat_id', chatId);
 
     const formattedParticipants = await Promise.all(
-      (participants || [])
-        .filter((p) => p.user_id !== userId)
-        .map(async (p) => {
-          const display = await resolveUserDisplay(p.users);
-          return {
-            id: p.users.id,
-            name: display.name,
-            email: p.users.email,
-            avatarUrl: display.avatarUrl,
-            isOnline: isUserOnline(p.users.last_seen_at),
-          };
-        })
+      (participants || []).map(async (p) => {
+        const display = await resolveUserDisplay(p.users);
+        return {
+          id: p.users.id,
+          name: display.name,
+          email: p.users.email,
+          avatarUrl: display.avatarUrl,
+          isOnline: isUserOnline(p.users.last_seen_at),
+          isSelf: p.users.id === userId,
+          isAdmin: chat.type === 'group' && chat.created_by === p.users.id,
+        };
+      })
     );
+
+    const otherParticipants = formattedParticipants.filter((p) => !p.isSelf);
 
     return {
       id: chat.id,
       type: chat.type,
-      name: chat.type === 'direct' ? formattedParticipants[0]?.name : chat.name,
+      name: chat.type === 'direct' ? otherParticipants[0]?.name : chat.name,
       groupName: chat.name,
-      participants: formattedParticipants,
+      participants: chat.type === 'direct' ? otherParticipants : formattedParticipants,
+      members: chat.type === 'group' ? formattedParticipants : undefined,
       createdBy: chat.created_by,
+      isAdmin: chat.type === 'group' && chat.created_by === userId,
       updatedAt: chat.updated_at,
     };
   },
@@ -233,6 +252,7 @@ export const chatRepository = {
         .from('chat_participants')
         .select(`
           chat_id,
+          hidden_at,
           chats!inner (
             id,
             type,
@@ -242,7 +262,8 @@ export const chatRepository = {
             updated_at
           )
         `)
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .is('hidden_at', null);
 
       if (error) throw error;
 
@@ -306,6 +327,8 @@ export const chatRepository = {
             name: chat.type === 'direct' ? otherParticipant?.name : chat.name,
             participants: chat.type === 'direct' && otherParticipant ? [otherParticipant] : [],
             participantCount: chat.type === 'group' ? participantCount : undefined,
+            createdBy: chat.created_by,
+            isAdmin: chat.type === 'group' && chat.created_by === userId,
             lastMessage: lastMessageRow
               ? {
                   content: previewMessageContent(lastMessageRow),
@@ -634,6 +657,14 @@ export const chatRepository = {
         throw new Error('Only the group creator can remove other members');
       }
 
+      if (memberToRemoveId === chat.created_by && memberToRemoveId !== userId) {
+        throw new Error('Cannot remove the group creator');
+      }
+
+      if (memberToRemoveId === chat.created_by && memberToRemoveId === userId) {
+        throw new Error('Group creator must delete the group instead of leaving');
+      }
+
       const { error: deleteError } = await supabaseAdmin
         .from('chat_participants')
         .delete()
@@ -647,5 +678,102 @@ export const chatRepository = {
       logger.error('Remove group member error', { error: error.message });
       throw error;
     }
+  },
+
+  async deleteDirectChat(chatId, userId) {
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('type')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'direct') throw new Error('Not a direct chat');
+
+    await assertParticipant(chatId, userId);
+
+    const { error } = await supabaseAdmin
+      .from('chat_participants')
+      .update({ hidden_at: new Date().toISOString() })
+      .eq('chat_id', chatId)
+      .eq('user_id', userId);
+
+    if (error) throw error;
+    return { success: true };
+  },
+
+  async leaveGroup(chatId, userId) {
+    return this.removeGroupMember(chatId, userId, userId);
+  },
+
+  async deleteGroup(chatId, userId) {
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('type, created_by')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'group') throw new Error('Not a group chat');
+    if (chat.created_by !== userId) {
+      throw new Error('Only the group creator can delete the group');
+    }
+
+    await assertParticipant(chatId, userId);
+
+    const { error } = await supabaseAdmin.from('chats').delete().eq('id', chatId);
+    if (error) throw error;
+    return { success: true };
+  },
+
+  async getGroupMembers(chatId, userId) {
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('type, created_by, name')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'group') throw new Error('Not a group chat');
+
+    await assertParticipant(chatId, userId);
+
+    const { data: participants, error } = await supabaseAdmin
+      .from('chat_participants')
+      .select(`
+        user_id,
+        users!inner ( id, email, avatar_url, last_seen_at )
+      `)
+      .eq('chat_id', chatId);
+
+    if (error) throw error;
+
+    const members = await Promise.all(
+      (participants || []).map(async (p) => {
+        const display = await resolveUserDisplay(p.users);
+        return {
+          id: p.users.id,
+          name: display.name,
+          avatarUrl: display.avatarUrl,
+          isOnline: isUserOnline(p.users.last_seen_at),
+          isSelf: p.users.id === userId,
+          isAdmin: chat.created_by === p.users.id,
+        };
+      })
+    );
+
+    members.sort((a, b) => {
+      if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+      if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return {
+      chatId,
+      groupName: chat.name,
+      createdBy: chat.created_by,
+      isAdmin: chat.created_by === userId,
+      members,
+    };
   },
 };

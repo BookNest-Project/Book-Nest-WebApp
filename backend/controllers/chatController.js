@@ -188,6 +188,61 @@ export const chatController = {
       await chatRepository.removeGroupMember(chatId, req.user.id, memberId);
       res.status(200).json(formatSuccess(null, 'Member removed'));
     } catch (error) {
+      if (
+        error.message === 'Only the group creator can remove other members' ||
+        error.message === 'Cannot remove the group creator' ||
+        error.message === 'Group creator must delete the group instead of leaving'
+      ) {
+        return res.status(403).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
+  async deleteDirectChat(req, res, next) {
+    try {
+      await chatRepository.deleteDirectChat(req.params.chatId, req.user.id);
+      res.status(200).json(formatSuccess(null, 'Conversation deleted'));
+    } catch (error) {
+      if (error.message === 'Not a direct chat') {
+        return res.status(400).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
+  async leaveGroup(req, res, next) {
+    try {
+      await chatRepository.leaveGroup(req.params.chatId, req.user.id);
+      res.status(200).json(formatSuccess(null, 'Left group'));
+    } catch (error) {
+      if (error.message === 'Group creator must delete the group instead of leaving') {
+        return res.status(403).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
+  async deleteGroup(req, res, next) {
+    try {
+      await chatRepository.deleteGroup(req.params.chatId, req.user.id);
+      res.status(200).json(formatSuccess(null, 'Group deleted'));
+    } catch (error) {
+      if (error.message === 'Only the group creator can delete the group') {
+        return res.status(403).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
+  async getGroupMembers(req, res, next) {
+    try {
+      const result = await chatRepository.getGroupMembers(req.params.chatId, req.user.id);
+      res.status(200).json(formatSuccess(result, 'Group members retrieved'));
+    } catch (error) {
+      if (error.message === 'Not a group chat') {
+        return res.status(400).json({ error: error.message });
+      }
       next(error);
     }
   },
