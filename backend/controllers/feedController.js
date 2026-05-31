@@ -27,6 +27,16 @@ export const feedController = {
     }
   },
 
+  async getPostById(req, res, next) {
+    try {
+      const viewerId = req.user?.id || null;
+      const post = await feedRepository.getPostById(req.params.postId, viewerId);
+      res.status(200).json(formatSuccess(post, 'Post retrieved'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getUserPosts(req, res, next) {
     try {
       const userId = req.user.id;

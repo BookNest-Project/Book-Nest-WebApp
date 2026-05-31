@@ -1,12 +1,63 @@
 import webpush from 'web-push';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
+import { notificationRepository } from '../repositories/notificationRepository.js';
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:support@booknest.app';
 
 let vapidReady = false;
+
+async function resolveActor(actorId) {
+  if (!actorId) return { id: null, name: 'Someone', username: null };
+
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('id, email, avatar_url')
+    .eq('id', actorId)
+    .maybeSingle();
+
+  if (!user) return { id: actorId, name: 'Someone', username: null };
+
+  const { data: profile } = await supabaseAdmin
+    .from('reader_profiles')
+    .select('display_name, username')
+    .eq('user_id', actorId)
+    .maybeSingle();
+
+  return {
+    id: user.id,
+    name: profile?.display_name || user.email?.split('@')[0] || 'Someone',
+    username: profile?.username || null,
+  };
+}
+
+async function shouldSendPush(userId) {
+  const { data: prefs } = await supabaseAdmin
+    .from('user_settings')
+    .select('push_notifications')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  return !(prefs && prefs.push_notifications === false);
+}
+
+async function pushToUser(userId, payload) {
+  if (!ensureVapid() || !(await shouldSendPush(userId))) return 0;
+
+  const { data: subs } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('endpoint, p256dh, auth')
+    .eq('user_id', userId);
+
+  let sent = 0;
+  for (const sub of subs || []) {
+    const ok = await notificationService.sendPush(sub, payload);
+    if (ok) sent += 1;
+  }
+  return sent;
+}
 
 function ensureVapid() {
   if (vapidReady) return true;
@@ -136,6 +187,67 @@ export const notificationService = {
     }
 
     return { sent };
+  },
+
+  async notifyNewFollower(followingId, followerId) {
+    const actor = await resolveActor(followerId);
+    const profileUrl = actor.username ? `/${actor.username}` : '/community';
+
+    await notificationRepository.create({
+      userId: followingId,
+      type: 'follow',
+      title: `${actor.name} followed you`,
+      body: 'Tap to view their profile.',
+      url: profileUrl,
+      actorId: followerId,
+    });
+
+    await pushToUser(followingId, {
+      title: 'New follower',
+      body: `${actor.name} started following you.`,
+      url: profileUrl,
+    });
+
+    return { notified: true };
+  },
+
+  async notifyNewMessage({ chatId, senderId, content, postId = null }) {
+    const actor = await resolveActor(senderId);
+
+    const { data: participants, error } = await supabaseAdmin
+      .from('chat_participants')
+      .select('user_id')
+      .eq('chat_id', chatId)
+      .neq('user_id', senderId);
+
+    if (error || !participants?.length) return { notified: 0 };
+
+    const preview = postId
+      ? 'Shared a post with you'
+      : (content || '').trim().slice(0, 120) || 'Sent you a message';
+    const messageUrl = `/messages?chat=${chatId}`;
+
+    let notified = 0;
+    for (const { user_id: recipientId } of participants) {
+      await notificationRepository.create({
+        userId: recipientId,
+        type: 'message',
+        title: `New message from ${actor.name}`,
+        body: preview,
+        url: messageUrl,
+        actorId: senderId,
+        metadata: { chatId },
+      });
+
+      await pushToUser(recipientId, {
+        title: actor.name,
+        body: preview,
+        url: messageUrl,
+      });
+      notified += 1;
+    }
+
+    return { notified };
   },
 
   async sendStreakReminders() {

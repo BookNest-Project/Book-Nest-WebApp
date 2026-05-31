@@ -273,6 +273,20 @@ export const feedRepository = {
     return formatted;
   },
 
+  async getPostsByIds(postIds, viewerUserId = null) {
+    const ids = [...new Set((postIds || []).filter(Boolean))];
+    if (!ids.length) return new Map();
+
+    const { data: posts, error } = await supabaseAdmin
+      .from('posts')
+      .select(POST_SELECT)
+      .in('id', ids);
+
+    if (error) throw error;
+    const formatted = await formatPostsList(posts || [], viewerUserId);
+    return new Map(formatted.map((post) => [post.id, post]));
+  },
+
   async createPost(userId, content, imageUrl, status = 'published', tags = {}) {
     try {
       const { data, error } = await supabaseAdmin

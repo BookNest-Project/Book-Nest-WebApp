@@ -16,7 +16,7 @@ export const followRepository = {
         });
 
       if (error && error.code !== '23505') throw error;
-      return { success: !error };
+      return { created: !error };
     } catch (error) {
       logger.error('Follow error', { error: error.message });
       throw error;

@@ -1,5 +1,6 @@
 import { followRepository } from '../repositories/followRepository.js';
 import { formatSuccess } from '../utils/responseFormatter.js';
+import { notificationService } from '../services/notificationService.js';
 import { logger } from '../utils/logger.js';
 
 export const followController = {
@@ -8,7 +9,13 @@ export const followController = {
       const followerId = req.user.id;
       const { userId } = req.params;
 
-      await followRepository.follow(followerId, userId);
+      const result = await followRepository.follow(followerId, userId);
+
+      if (result.created) {
+        void notificationService.notifyNewFollower(userId, followerId).catch((err) => {
+          logger.warn('Follow notification failed', { error: err.message });
+        });
+      }
 
       res.status(200).json(formatSuccess(null, 'Followed successfully'));
     } catch (error) {

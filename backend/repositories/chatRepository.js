@@ -1,39 +1,131 @@
+import { randomBytes } from 'crypto';
 import { supabaseAdmin } from '../config/supabase.js';
+import { getFrontendUrl } from '../utils/envUrls.js';
 import { logger } from '../utils/logger.js';
+import { feedRepository } from './feedRepository.js';
+import { isUserOnline } from '../utils/presence.js';
+
+async function assertParticipant(chatId, userId) {
+  const { data, error } = await supabaseAdmin
+    .from('chat_participants')
+    .select('id')
+    .eq('chat_id', chatId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error('Not a participant');
+  return true;
+}
+
+async function getHiddenMessageIds(userId, chatId) {
+  const { data: participantMessages } = await supabaseAdmin
+    .from('messages')
+    .select('id')
+    .eq('chat_id', chatId);
+
+  const messageIds = (participantMessages || []).map((m) => m.id);
+  if (messageIds.length === 0) return new Set();
+
+  const { data: hidden } = await supabaseAdmin
+    .from('message_deletions')
+    .select('message_id')
+    .eq('user_id', userId)
+    .in('message_id', messageIds);
+
+  return new Set((hidden || []).map((h) => h.message_id));
+}
+
+async function resolveUserDisplay(userRow) {
+  if (!userRow) return { name: 'User', avatarUrl: null };
+
+  const { data: readerProfile } = await supabaseAdmin
+    .from('reader_profiles')
+    .select('display_name, avatar_url')
+    .eq('user_id', userRow.id)
+    .maybeSingle();
+
+  const name =
+    readerProfile?.display_name ||
+    userRow.email?.split('@')[0] ||
+    'User';
+
+  return {
+    name,
+    avatarUrl: readerProfile?.avatar_url || userRow.avatar_url || null,
+  };
+}
+
+function formatMessage(msg, display, sharedPost = null) {
+  const deletedForEveryone = Boolean(msg.deleted_for_everyone_at);
+  return {
+    id: msg.id,
+    content: deletedForEveryone ? null : msg.content,
+    postId: deletedForEveryone ? null : msg.post_id || null,
+    sharedPost: deletedForEveryone ? null : sharedPost,
+    senderId: msg.sender_id,
+    senderName: display.name,
+    senderAvatar: display.avatarUrl,
+    isRead: msg.is_read,
+    isDeleted: deletedForEveryone,
+    deletedForEveryone,
+    createdAt: msg.created_at,
+  };
+}
+
+async function attachSharedPosts(messages, viewerUserId) {
+  const postIds = (messages || []).map((m) => m.post_id).filter(Boolean);
+  const postMap = await feedRepository.getPostsByIds(postIds, viewerUserId);
+  return postMap;
+}
+
+function previewMessageContent(messageRow) {
+  if (messageRow.deleted_for_everyone_at) return 'Message deleted';
+  if (messageRow.post_id) return 'Shared a post';
+  return messageRow.content;
+}
 
 export const chatRepository = {
-  /**
-   * Get or create a direct chat between two users
-   */
   async getOrCreateDirectChat(userId1, userId2) {
     try {
-      // Check if chat already exists
-      const { data: existingParticipants } = await supabaseAdmin
+      if (userId1 === userId2) {
+        throw new Error('Cannot chat with yourself');
+      }
+
+      const { data: user1Chats } = await supabaseAdmin
         .from('chat_participants')
         .select('chat_id')
         .eq('user_id', userId1);
 
-      if (existingParticipants && existingParticipants.length > 0) {
-        const chatIds = existingParticipants.map(p => p.chat_id);
-        
-        const { data: existing } = await supabaseAdmin
+      if (user1Chats?.length) {
+        const chatIds = user1Chats.map((p) => p.chat_id);
+        const { data: shared } = await supabaseAdmin
           .from('chat_participants')
           .select('chat_id')
           .eq('user_id', userId2)
           .in('chat_id', chatIds);
 
-        if (existing && existing.length > 0) {
-          const chatId = existing[0].chat_id;
+        for (const row of shared || []) {
           const { data: chat } = await supabaseAdmin
             .from('chats')
             .select('*')
-            .eq('id', chatId)
-            .single();
-          return { chat, isNew: false };
+            .eq('id', row.chat_id)
+            .eq('type', 'direct')
+            .maybeSingle();
+
+          if (!chat) continue;
+
+          const { count } = await supabaseAdmin
+            .from('chat_participants')
+            .select('id', { count: 'exact', head: true })
+            .eq('chat_id', chat.id);
+
+          if (count === 2) {
+            return { chat, isNew: false };
+          }
         }
       }
 
-      // Create new direct chat
       const { data: chat, error: chatError } = await supabaseAdmin
         .from('chats')
         .insert({ type: 'direct' })
@@ -42,7 +134,6 @@ export const chatRepository = {
 
       if (chatError) throw chatError;
 
-      // Add participants
       const { error: participantsError } = await supabaseAdmin
         .from('chat_participants')
         .insert([
@@ -59,12 +150,8 @@ export const chatRepository = {
     }
   },
 
-  /**
-   * Create a group chat
-   */
   async createGroupChat(name, createdBy, memberIds) {
     try {
-      // Create group chat
       const { data: chat, error: chatError } = await supabaseAdmin
         .from('chats')
         .insert({
@@ -77,8 +164,7 @@ export const chatRepository = {
 
       if (chatError) throw chatError;
 
-      // Add all participants (including creator)
-      const participants = [...new Set([createdBy, ...memberIds])].map(userId => ({
+      const participants = [...new Set([createdBy, ...memberIds])].map((userId) => ({
         chat_id: chat.id,
         user_id: userId,
       }));
@@ -96,9 +182,51 @@ export const chatRepository = {
     }
   },
 
-  /**
-   * Get user's all chats
-   */
+  async getChatById(chatId, userId) {
+    await assertParticipant(chatId, userId);
+
+    const { data: chat, error } = await supabaseAdmin
+      .from('chats')
+      .select('*')
+      .eq('id', chatId)
+      .single();
+
+    if (error) throw error;
+
+    const { data: participants } = await supabaseAdmin
+      .from('chat_participants')
+      .select(`
+        user_id,
+        users!inner ( id, email, avatar_url, role, last_seen_at )
+      `)
+      .eq('chat_id', chatId);
+
+    const formattedParticipants = await Promise.all(
+      (participants || [])
+        .filter((p) => p.user_id !== userId)
+        .map(async (p) => {
+          const display = await resolveUserDisplay(p.users);
+          return {
+            id: p.users.id,
+            name: display.name,
+            email: p.users.email,
+            avatarUrl: display.avatarUrl,
+            isOnline: isUserOnline(p.users.last_seen_at),
+          };
+        })
+    );
+
+    return {
+      id: chat.id,
+      type: chat.type,
+      name: chat.type === 'direct' ? formattedParticipants[0]?.name : chat.name,
+      groupName: chat.name,
+      participants: formattedParticipants,
+      createdBy: chat.created_by,
+      updatedAt: chat.updated_at,
+    };
+  },
+
   async getUserChats(userId) {
     try {
       const { data: participants, error } = await supabaseAdmin
@@ -118,83 +246,86 @@ export const chatRepository = {
 
       if (error) throw error;
 
-      const chats = await Promise.all(participants.map(async (p) => {
-        const chat = p.chats;
-        
-        // Get other participants info (for direct chats)
-        let otherParticipant = null;
-        if (chat.type === 'direct') {
-          const { data: otherParticipants } = await supabaseAdmin
-            .from('chat_participants')
-            .select(`
-              user_id,
-              users!inner (
-                id,
-                email,
-                avatar_url,
-                bio
-              )
-            `)
-            .eq('chat_id', chat.id)
-            .neq('user_id', userId);
+      const chats = await Promise.all(
+        (participants || []).map(async (p) => {
+          const chat = p.chats;
+          let otherParticipant = null;
 
-          if (otherParticipants && otherParticipants[0]) {
-            const user = otherParticipants[0].users;
-            otherParticipant = {
-              id: user.id,
-              name: user.email.split('@')[0],
-              email: user.email,
-              avatarUrl: user.avatar_url,
-            };
+          if (chat.type === 'direct') {
+            const { data: otherParticipants } = await supabaseAdmin
+              .from('chat_participants')
+              .select(`
+                user_id,
+                users!inner ( id, email, avatar_url, last_seen_at )
+              `)
+              .eq('chat_id', chat.id)
+              .neq('user_id', userId);
+
+            if (otherParticipants?.[0]) {
+              const display = await resolveUserDisplay(otherParticipants[0].users);
+              otherParticipant = {
+                id: otherParticipants[0].users.id,
+                name: display.name,
+                email: otherParticipants[0].users.email,
+                avatarUrl: display.avatarUrl,
+                isOnline: isUserOnline(otherParticipants[0].users.last_seen_at),
+              };
+            }
           }
-        }
 
-        // Get last message
-        const { data: lastMessage } = await supabaseAdmin
-          .from('messages')
-          .select('*')
-          .eq('chat_id', chat.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+          const hiddenIds = await getHiddenMessageIds(userId, chat.id);
 
-        // Get unread count
-        const { count: unreadCount } = await supabaseAdmin
-          .from('messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('chat_id', chat.id)
-          .eq('is_read', false)
-          .neq('sender_id', userId);
+          const { data: recentMessages } = await supabaseAdmin
+            .from('messages')
+            .select('*')
+            .eq('chat_id', chat.id)
+            .order('created_at', { ascending: false })
+            .limit(20);
 
-        // Get participant count for groups
-        let participantCount = 0;
-        if (chat.type === 'group') {
-          const { count } = await supabaseAdmin
-            .from('chat_participants')
+          const lastMessageRow = (recentMessages || []).find((m) => !hiddenIds.has(m.id));
+
+          const { count: unreadCount } = await supabaseAdmin
+            .from('messages')
             .select('id', { count: 'exact', head: true })
-            .eq('chat_id', chat.id);
-          participantCount = count || 0;
-        }
+            .eq('chat_id', chat.id)
+            .eq('is_read', false)
+            .neq('sender_id', userId);
 
-        return {
-          id: chat.id,
-          type: chat.type,
-          name: chat.type === 'direct' ? otherParticipant?.name : chat.name,
-          participants: chat.type === 'direct' ? [otherParticipant] : [],
-          participantCount: chat.type === 'group' ? participantCount : undefined,
-          lastMessage: lastMessage ? {
-            content: lastMessage.content,
-            senderId: lastMessage.sender_id,
-            senderName: lastMessage.sender_id === userId ? 'You' : (chat.type === 'direct' ? otherParticipant?.name : ''),
-            createdAt: lastMessage.created_at,
-            isRead: lastMessage.is_read,
-          } : null,
-          unreadCount: unreadCount || 0,
-          updatedAt: chat.updated_at,
-        };
-      }));
+          let participantCount = 0;
+          if (chat.type === 'group') {
+            const { count } = await supabaseAdmin
+              .from('chat_participants')
+              .select('id', { count: 'exact', head: true })
+              .eq('chat_id', chat.id);
+            participantCount = count || 0;
+          }
 
-      // Sort by last message time
+          return {
+            id: chat.id,
+            type: chat.type,
+            name: chat.type === 'direct' ? otherParticipant?.name : chat.name,
+            participants: chat.type === 'direct' && otherParticipant ? [otherParticipant] : [],
+            participantCount: chat.type === 'group' ? participantCount : undefined,
+            lastMessage: lastMessageRow
+              ? {
+                  content: previewMessageContent(lastMessageRow),
+                  senderId: lastMessageRow.sender_id,
+                  senderName:
+                    lastMessageRow.sender_id === userId
+                      ? 'You'
+                      : chat.type === 'direct'
+                        ? otherParticipant?.name
+                        : '',
+                  createdAt: lastMessageRow.created_at,
+                  isRead: lastMessageRow.is_read,
+                }
+              : null,
+            unreadCount: unreadCount || 0,
+            updatedAt: chat.updated_at,
+          };
+        })
+      );
+
       chats.sort((a, b) => {
         const timeA = a.lastMessage ? new Date(a.lastMessage.createdAt).getTime() : 0;
         const timeB = b.lastMessage ? new Date(b.lastMessage.createdAt).getTime() : 0;
@@ -208,48 +339,35 @@ export const chatRepository = {
     }
   },
 
-  /**
-   * Get chat messages
-   */
   async getChatMessages(chatId, userId, page = 1, limit = 50) {
     try {
-      // Verify user is participant
-      const { data: isParticipant, error: participantError } = await supabaseAdmin
-        .from('chat_participants')
-        .select('id')
-        .eq('chat_id', chatId)
-        .eq('user_id', userId)
-        .maybeSingle();
+      await assertParticipant(chatId, userId);
 
-      if (participantError) throw participantError;
-      if (!isParticipant) {
-        throw new Error('Not a participant');
-      }
-
+      const hiddenIds = await getHiddenMessageIds(userId, chatId);
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
       const { data: messages, error, count } = await supabaseAdmin
         .from('messages')
-        .select(`
+        .select(
+          `
           id,
           content,
           sender_id,
+          post_id,
           is_read,
+          deleted_for_everyone_at,
           created_at,
-          users!sender_id (
-            id,
-            email,
-            avatar_url
-          )
-        `)
+          users!sender_id ( id, email, avatar_url )
+        `,
+          { count: 'exact' }
+        )
         .eq('chat_id', chatId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
       if (error) throw error;
 
-      // Mark messages as read
       await supabaseAdmin
         .from('messages')
         .update({ is_read: true })
@@ -257,18 +375,26 @@ export const chatRepository = {
         .neq('sender_id', userId)
         .eq('is_read', false);
 
-      const formattedMessages = (messages || []).map(msg => ({
-        id: msg.id,
-        content: msg.content,
-        senderId: msg.sender_id,
-        senderName: msg.users.email.split('@')[0],
-        senderAvatar: msg.users.avatar_url,
-        isRead: msg.is_read,
-        createdAt: msg.created_at,
-      })).reverse();
+      await supabaseAdmin
+        .from('chat_participants')
+        .update({ last_read_at: new Date().toISOString() })
+        .eq('chat_id', chatId)
+        .eq('user_id', userId);
+
+      const postMap = await attachSharedPosts(messages, userId);
+
+      const formattedMessages = await Promise.all(
+        (messages || [])
+          .filter((msg) => !hiddenIds.has(msg.id))
+          .map(async (msg) => {
+            const display = await resolveUserDisplay(msg.users);
+            const sharedPost = msg.post_id ? postMap.get(msg.post_id) || null : null;
+            return formatMessage(msg, display, sharedPost);
+          })
+      );
 
       return {
-        messages: formattedMessages,
+        messages: formattedMessages.reverse(),
         total: count || 0,
         page,
         limit,
@@ -280,22 +406,17 @@ export const chatRepository = {
     }
   },
 
-  /**
-   * Send message
-   */
-  async sendMessage(chatId, userId, content) {
+  async sendMessage(chatId, userId, content, postId = null) {
     try {
-      // Verify user is participant
-      const { data: isParticipant, error: participantError } = await supabaseAdmin
-        .from('chat_participants')
-        .select('id')
-        .eq('chat_id', chatId)
-        .eq('user_id', userId)
-        .maybeSingle();
+      await assertParticipant(chatId, userId);
 
-      if (participantError) throw participantError;
-      if (!isParticipant) {
-        throw new Error('Not a participant');
+      const trimmed = content?.trim() || '';
+      if (!trimmed && !postId) {
+        throw new Error('Content or postId is required');
+      }
+
+      if (postId) {
+        await feedRepository.getPostById(postId, userId);
       }
 
       const { data: message, error } = await supabaseAdmin
@@ -303,51 +424,175 @@ export const chatRepository = {
         .insert({
           chat_id: chatId,
           sender_id: userId,
-          content,
+          content: trimmed || 'Shared a post',
+          post_id: postId || null,
         })
-        .select(`
+        .select(
+          `
           id,
           content,
           sender_id,
+          post_id,
           is_read,
+          deleted_for_everyone_at,
           created_at,
-          users!sender_id (
-            id,
-            email,
-            avatar_url
-          )
-        `)
+          users!sender_id ( id, email, avatar_url )
+        `
+        )
         .single();
 
       if (error) throw error;
 
-      // Update chat updated_at
+      if (postId) {
+        try {
+          await feedRepository.incrementShareCount(postId);
+        } catch (shareError) {
+          logger.warn('Share count increment failed', { postId, error: shareError.message });
+        }
+      }
+
       await supabaseAdmin
         .from('chats')
         .update({ updated_at: new Date().toISOString() })
         .eq('id', chatId);
 
-      return {
-        id: message.id,
-        content: message.content,
-        senderId: message.sender_id,
-        senderName: message.users.email.split('@')[0],
-        senderAvatar: message.users.avatar_url,
-        isRead: message.is_read,
-        createdAt: message.created_at,
-      };
+      const display = await resolveUserDisplay(message.users);
+      let sharedPost = null;
+      if (message.post_id) {
+        try {
+          sharedPost = await feedRepository.getPostById(message.post_id, userId);
+        } catch {
+          sharedPost = null;
+        }
+      }
+
+      return formatMessage(message, { ...display, name: 'You' }, sharedPost);
     } catch (error) {
       logger.error('Send message error', { error: error.message });
       throw error;
     }
   },
 
-  /**
-   * Add member to group chat
-   */
+  async deleteMessageForMe(messageId, userId) {
+    const { data: message, error } = await supabaseAdmin
+      .from('messages')
+      .select('id, chat_id')
+      .eq('id', messageId)
+      .single();
+
+    if (error) throw error;
+    await assertParticipant(message.chat_id, userId);
+
+    const { error: insertError } = await supabaseAdmin
+      .from('message_deletions')
+      .upsert(
+        { message_id: messageId, user_id: userId },
+        { onConflict: 'message_id,user_id' }
+      );
+
+    if (insertError) throw insertError;
+    return { success: true };
+  },
+
+  async deleteMessageForEveryone(messageId, userId) {
+    const { data: message, error } = await supabaseAdmin
+      .from('messages')
+      .select('id, chat_id, sender_id, deleted_for_everyone_at')
+      .eq('id', messageId)
+      .single();
+
+    if (error) throw error;
+    if (message.sender_id !== userId) {
+      throw new Error('Only the sender can delete for everyone');
+    }
+    if (message.deleted_for_everyone_at) {
+      return { success: true };
+    }
+
+    await assertParticipant(message.chat_id, userId);
+
+    const { error: updateError } = await supabaseAdmin
+      .from('messages')
+      .update({
+        deleted_for_everyone_at: new Date().toISOString(),
+        content: 'This message was deleted',
+      })
+      .eq('id', messageId);
+
+    if (updateError) throw updateError;
+    return { success: true };
+  },
+
+  async createGroupInvite(chatId, userId) {
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('type')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'group') throw new Error('Not a group chat');
+
+    await assertParticipant(chatId, userId);
+
+    const token = randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: invite, error } = await supabaseAdmin
+      .from('chat_invites')
+      .insert({
+        chat_id: chatId,
+        token,
+        created_by: userId,
+        expires_at: expiresAt,
+      })
+      .select('token, expires_at')
+      .single();
+
+    if (error) throw error;
+
+    const inviteUrl = `${getFrontendUrl()}/messages/join/${invite.token}`;
+    return { token: invite.token, inviteUrl, expiresAt: invite.expires_at };
+  },
+
+  async joinGroupViaInvite(token, userId) {
+    const { data: invite, error } = await supabaseAdmin
+      .from('chat_invites')
+      .select('id, chat_id, expires_at, is_active')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invite || !invite.is_active) {
+      throw new Error('Invalid or expired invite');
+    }
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      throw new Error('Invite link has expired');
+    }
+
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('id, type, name')
+      .eq('id', invite.chat_id)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'group') throw new Error('Invalid group invite');
+
+    const { error: joinError } = await supabaseAdmin
+      .from('chat_participants')
+      .upsert(
+        { chat_id: chat.id, user_id: userId },
+        { onConflict: 'chat_id,user_id', ignoreDuplicates: true }
+      );
+
+    if (joinError && joinError.code !== '23505') throw joinError;
+
+    return chat;
+  },
+
   async addGroupMember(chatId, userId, newMemberId) {
     try {
-      // Verify chat is group
       const { data: chat, error: chatError } = await supabaseAdmin
         .from('chats')
         .select('type')
@@ -355,30 +600,13 @@ export const chatRepository = {
         .single();
 
       if (chatError) throw chatError;
-      if (chat.type !== 'group') {
-        throw new Error('Not a group chat');
-      }
+      if (chat.type !== 'group') throw new Error('Not a group chat');
 
-      // Verify current user is member
-      const { data: isMember, error: memberError } = await supabaseAdmin
-        .from('chat_participants')
-        .select('id')
-        .eq('chat_id', chatId)
-        .eq('user_id', userId)
-        .maybeSingle();
+      await assertParticipant(chatId, userId);
 
-      if (memberError) throw memberError;
-      if (!isMember) {
-        throw new Error('Not a member');
-      }
-
-      // Add new member
       const { error: insertError } = await supabaseAdmin
         .from('chat_participants')
-        .insert({
-          chat_id: chatId,
-          user_id: newMemberId,
-        });
+        .insert({ chat_id: chatId, user_id: newMemberId });
 
       if (insertError && insertError.code !== '23505') throw insertError;
 
@@ -389,37 +617,23 @@ export const chatRepository = {
     }
   },
 
-  /**
-   * Remove member from group chat
-   */
   async removeGroupMember(chatId, userId, memberToRemoveId) {
     try {
-      // Verify chat is group
       const { data: chat, error: chatError } = await supabaseAdmin
         .from('chats')
-        .select('type')
+        .select('type, created_by')
         .eq('id', chatId)
         .single();
 
       if (chatError) throw chatError;
-      if (chat.type !== 'group') {
-        throw new Error('Not a group chat');
+      if (chat.type !== 'group') throw new Error('Not a group chat');
+
+      await assertParticipant(chatId, userId);
+
+      if (memberToRemoveId !== userId && chat.created_by !== userId) {
+        throw new Error('Only the group creator can remove other members');
       }
 
-      // Verify current user is member
-      const { data: isMember, error: memberError } = await supabaseAdmin
-        .from('chat_participants')
-        .select('id')
-        .eq('chat_id', chatId)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (memberError) throw memberError;
-      if (!isMember) {
-        throw new Error('Not a member');
-      }
-
-      // Remove member
       const { error: deleteError } = await supabaseAdmin
         .from('chat_participants')
         .delete()

@@ -6,6 +6,7 @@ import { upload } from '../middleware/upload.js';
 const router = express.Router();
 
 router.get('/users/:userId/posts', authenticateOptional, feedController.getUserPublicPosts);
+router.get('/posts/:postId', authenticateOptional, feedController.getPostById);
 router.get('/posts/:postId/comments', authenticateOptional, feedController.getComments);
 
 router.use(authenticate);

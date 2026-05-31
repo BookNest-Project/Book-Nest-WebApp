@@ -1,10 +1,49 @@
 import { notificationService } from '../services/notificationService.js';
+import { notificationRepository } from '../repositories/notificationRepository.js';
 import { formatSuccess } from '../utils/responseFormatter.js';
 
 export const notificationController = {
   getVapidPublicKey(req, res) {
     const key = notificationService.getVapidPublicKey();
     res.status(200).json(formatSuccess({ publicKey: key }, 'VAPID public key'));
+  },
+
+  async list(req, res, next) {
+    try {
+      const page = parseInt(req.query.page || '1', 10);
+      const limit = parseInt(req.query.limit || '20', 10);
+      const result = await notificationRepository.list(req.user.id, page, limit);
+      res.status(200).json(formatSuccess(result, 'Notifications retrieved'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getUnreadCount(req, res, next) {
+    try {
+      const count = await notificationRepository.getUnreadCount(req.user.id);
+      res.status(200).json(formatSuccess({ count }, 'Unread count retrieved'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async markAsRead(req, res, next) {
+    try {
+      await notificationRepository.markAsRead(req.params.id, req.user.id);
+      res.status(200).json(formatSuccess(null, 'Notification marked as read'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async markAllAsRead(req, res, next) {
+    try {
+      await notificationRepository.markAllAsRead(req.user.id);
+      res.status(200).json(formatSuccess(null, 'All notifications marked as read'));
+    } catch (error) {
+      next(error);
+    }
   },
 
   async subscribe(req, res, next) {

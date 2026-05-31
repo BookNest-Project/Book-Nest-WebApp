@@ -268,11 +268,14 @@ async function sendViaSmtp({ to, subject, html }) {
 
 function mapBrevoError(message) {
   const lower = (message || '').toLowerCase();
+  if (lower.includes('not yet activated') || lower.includes('smtp account is not')) {
+    return 'Brevo transactional email is not activated on your account yet. In Brevo open Help → Contact support and ask them to activate transactional/API sending for BookNest (signup verification emails). This usually takes 1–2 business days.';
+  }
   if (lower.includes('sender') && (lower.includes('not valid') || lower.includes('verify'))) {
     return `${message} In Brevo go to Settings → Senders and verify ${parseSender(getFromAddress()).email}.`;
   }
   if (lower.includes('unauthorized') || lower.includes('api key')) {
-    return `${message} Check BREVO_API_KEY on Railway.`;
+    return `${message} Check BREVO_API_KEY on Railway and disable IP restrictions for the key.`;
   }
   return message;
 }

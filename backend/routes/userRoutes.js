@@ -14,6 +14,7 @@ router.put('/profile', authenticate, userController.updateProfile);
 // ✅ ADD THESE NEW ROUTES
 router.post('/favorite-genres', authenticate, userController.saveFavoriteGenres);
 router.get('/favorite-genres', authenticate, userController.getFavoriteGenres);
+router.post('/presence', authenticate, userController.updatePresence);
 
 // Public routes (no authentication) 
 

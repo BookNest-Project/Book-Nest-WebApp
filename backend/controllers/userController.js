@@ -1,5 +1,6 @@
 // backend/controllers/userController.js
 import { userService } from '../services/userService.js';
+import { userRepository } from '../repositories/userRepository.js';
 import { formatSuccess } from '../utils/responseFormatter.js';
 
 export const userController = {
@@ -56,6 +57,19 @@ export const userController = {
           ? await userService.searchCommunityUsers(q, req.user.id)
           : await userService.searchUsers(q, req.user.id, role);
       res.status(200).json({ success: true, data: users });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updatePresence(req, res, next) {
+    try {
+      const lastSeenAt = await userRepository.updateLastSeen(req.user.id);
+      res.status(200).json({
+        success: true,
+        data: { lastSeenAt },
+        message: 'Presence updated',
+      });
     } catch (error) {
       next(error);
     }

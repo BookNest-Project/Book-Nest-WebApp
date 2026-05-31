@@ -6,7 +6,7 @@ export const userRepository = {
   async findById(userId) {
     const { data: user, error } = await supabaseAdmin
       .from('users')
-      .select('id, email, role, account_status, is_email_verified, created_at, updated_at')
+      .select('id, email, role, account_status, is_email_verified, last_seen_at, created_at, updated_at')
       .eq('id', userId)
       .single();
 
@@ -253,5 +253,36 @@ export const userRepository = {
       throw error;
     }
     return true;
+  },
+
+  async updateLastSeen(userId) {
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from('users')
+      .update({ last_seen_at: now, updated_at: now })
+      .eq('id', userId);
+
+    if (error) {
+      logger.warn('updateLastSeen failed', { userId, error: error.message });
+      return null;
+    }
+    return now;
+  },
+
+  async getLastSeenMap(userIds) {
+    const ids = [...new Set((userIds || []).filter(Boolean))];
+    if (!ids.length) return new Map();
+
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('id, last_seen_at')
+      .in('id', ids);
+
+    if (error) {
+      logger.warn('getLastSeenMap failed', { error: error.message });
+      return new Map();
+    }
+
+    return new Map((data || []).map((row) => [row.id, row.last_seen_at]));
   },
 };
