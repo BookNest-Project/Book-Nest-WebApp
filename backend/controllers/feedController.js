@@ -104,7 +104,7 @@ export const feedController = {
       const post = await feedRepository.createPost(userId, content.trim(), image_url, 'published', tags);
 
       const authorName = post.author?.name || 'Someone you follow';
-      void notificationService.notifyFollowersOfNewPost(userId, authorName).catch((err) => {
+      void notificationService.notifyFollowersOfNewPost(userId, authorName, post.id).catch((err) => {
         logger.warn('Follower notification failed', { error: err.message });
       });
 
@@ -141,7 +141,7 @@ export const feedController = {
       const post = await feedRepository.publishDraft(postId, userId);
 
       const authorName = post.author?.name || 'Someone you follow';
-      void notificationService.notifyFollowersOfNewPost(userId, authorName).catch((err) => {
+      void notificationService.notifyFollowersOfNewPost(userId, authorName, post.id).catch((err) => {
         logger.warn('Follower notification failed', { error: err.message });
       });
 

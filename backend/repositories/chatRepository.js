@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { feedRepository } from './feedRepository.js';
 import { isUserOnline } from '../utils/presence.js';
 
-async function assertParticipant(chatId, userId) {
+async function assertParticipant(chatId, userId, { restoreHidden = false } = {}) {
   const { data, error } = await supabaseAdmin
     .from('chat_participants')
     .select('id, hidden_at')
@@ -14,7 +14,19 @@ async function assertParticipant(chatId, userId) {
     .maybeSingle();
 
   if (error) throw error;
-  if (!data || data.hidden_at) throw new Error('Not a participant');
+  if (!data) throw new Error('Not a participant');
+
+  if (data.hidden_at) {
+    if (restoreHidden) {
+      await supabaseAdmin
+        .from('chat_participants')
+        .update({ hidden_at: null })
+        .eq('id', data.id);
+      return true;
+    }
+    throw new Error('Not a participant');
+  }
+
   return true;
 }
 
@@ -198,7 +210,7 @@ export const chatRepository = {
   },
 
   async getChatById(chatId, userId) {
-    await assertParticipant(chatId, userId);
+    await assertParticipant(chatId, userId, { restoreHidden: true });
 
     const { data: chat, error } = await supabaseAdmin
       .from('chats')
@@ -364,7 +376,7 @@ export const chatRepository = {
 
   async getChatMessages(chatId, userId, page = 1, limit = 50) {
     try {
-      await assertParticipant(chatId, userId);
+      await assertParticipant(chatId, userId, { restoreHidden: true });
 
       const hiddenIds = await getHiddenMessageIds(userId, chatId);
       const from = (page - 1) * limit;
@@ -465,6 +477,13 @@ export const chatRepository = {
         .single();
 
       if (error) throw error;
+
+      // Restore the conversation for recipients who previously deleted/hid it
+      await supabaseAdmin
+        .from('chat_participants')
+        .update({ hidden_at: null })
+        .eq('chat_id', chatId)
+        .neq('user_id', userId);
 
       if (postId) {
         try {

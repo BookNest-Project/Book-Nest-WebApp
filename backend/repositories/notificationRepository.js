@@ -22,7 +22,10 @@ async function resolveActor(actorId) {
     id: user.id,
     name: profile?.display_name || user.email?.split('@')[0] || 'User',
     avatarUrl: profile?.avatar_url || user.avatar_url || null,
-    username: profile?.username || null,
+    username:
+      profile?.username?.replace(/^@/, '').trim().toLowerCase() ||
+      user.email?.split('@')[0]?.toLowerCase() ||
+      null,
   };
 }
 
@@ -35,6 +38,7 @@ function formatRow(row, actor) {
     url: row.url,
     isRead: row.is_read,
     createdAt: row.created_at,
+    actorId: row.actor_id || null,
     actor,
     metadata: row.metadata || {},
   };
@@ -64,14 +68,20 @@ export const notificationRepository = {
     return data;
   },
 
-  async list(userId, page = 1, limit = 20) {
+  async list(userId, page = 1, limit = 20, { unreadOnly = false } = {}) {
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
-    const { data, error, count } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('user_notifications')
       .select('*', { count: 'exact' })
-      .eq('user_id', userId)
+      .eq('user_id', userId);
+
+    if (unreadOnly) {
+      query = query.eq('is_read', false);
+    }
+
+    const { data, error, count } = await query
       .order('created_at', { ascending: false })
       .range(from, to);
 

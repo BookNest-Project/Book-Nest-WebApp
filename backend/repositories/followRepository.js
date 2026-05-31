@@ -1,6 +1,31 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
 
+async function formatFollowUser(userRow) {
+  if (!userRow) return null;
+
+  const { data: profile } = await supabaseAdmin
+    .from('reader_profiles')
+    .select('display_name, username, avatar_url')
+    .eq('user_id', userRow.id)
+    .maybeSingle();
+
+  const emailPrefix = userRow.email?.split('@')[0] || 'User';
+  const username =
+    profile?.username?.replace(/^@/, '').trim().toLowerCase() ||
+    emailPrefix.toLowerCase();
+
+  return {
+    id: userRow.id,
+    name: profile?.display_name || emailPrefix,
+    username,
+    email: userRow.email,
+    avatarUrl: profile?.avatar_url || userRow.avatar_url || null,
+    bio: userRow.bio,
+    role: userRow.role,
+  };
+}
+
 export const followRepository = {
   async follow(followerId, followingId) {
     try {
@@ -78,17 +103,12 @@ export const followRepository = {
 
       if (error) throw error;
 
-      const formattedFollowers = followers.map(f => ({
-        id: f.users.id,
-        name: f.users.email.split('@')[0],
-        email: f.users.email,
-        avatarUrl: f.users.avatar_url,
-        bio: f.users.bio,
-        role: f.users.role,
-      }));
+      const formattedFollowers = await Promise.all(
+        (followers || []).map(async (f) => formatFollowUser(f.users))
+      );
 
       return {
-        followers: formattedFollowers,
+        followers: formattedFollowers.filter(Boolean),
         total: count || 0,
         page,
         limit,
@@ -122,17 +142,12 @@ export const followRepository = {
 
       if (error) throw error;
 
-      const formattedFollowing = following.map(f => ({
-        id: f.users.id,
-        name: f.users.email.split('@')[0],
-        email: f.users.email,
-        avatarUrl: f.users.avatar_url,
-        bio: f.users.bio,
-        role: f.users.role,
-      }));
+      const formattedFollowing = await Promise.all(
+        (following || []).map(async (f) => formatFollowUser(f.users))
+      );
 
       return {
-        following: formattedFollowing,
+        following: formattedFollowing.filter(Boolean),
         total: count || 0,
         page,
         limit,

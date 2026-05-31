@@ -53,6 +53,22 @@ async function findUserForPublicProfile(slug, currentUserId) {
     return { user: data, error };
   }
 
+  const { data: readerMatches, error: readerError } = await supabaseAdmin
+    .from('reader_profiles')
+    .select('user_id')
+    .ilike('username', slug);
+
+  if (readerError) return { user: null, error: readerError };
+
+  if (readerMatches?.length === 1) {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select(USER_PUBLIC_SELECT)
+      .eq('id', readerMatches[0].user_id)
+      .maybeSingle();
+    return { user: data, error };
+  }
+
   const { data: candidates, error } = await supabaseAdmin
     .from('users')
     .select(USER_PUBLIC_SELECT)

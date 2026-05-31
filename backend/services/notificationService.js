@@ -29,7 +29,10 @@ async function resolveActor(actorId) {
   return {
     id: user.id,
     name: profile?.display_name || user.email?.split('@')[0] || 'Someone',
-    username: profile?.username || null,
+    username:
+      profile?.username?.replace(/^@/, '').trim().toLowerCase() ||
+      user.email?.split('@')[0]?.toLowerCase() ||
+      null,
   };
 }
 
@@ -149,27 +152,33 @@ export const notificationService = {
     }
   },
 
-  async notifyFollowersOfNewPost(authorId, authorName) {
-    if (!ensureVapid()) return { sent: 0, skipped: true };
-
+  async notifyFollowersOfNewPost(authorId, authorName, postId = null) {
     const { data: followers, error } = await supabaseAdmin
       .from('follows')
       .select('follower_id')
       .eq('following_id', authorId);
 
-    if (error || !followers?.length) return { sent: 0 };
+    if (error || !followers?.length) return { sent: 0, notified: 0 };
+
+    const body = `${authorName} shared a new post on BookNest.`;
+    const postUrl = '/community';
 
     let sent = 0;
-    const body = `${authorName} shared a new post on BookNest.`;
+    let notified = 0;
 
     for (const { follower_id: followerId } of followers) {
-      const { data: prefs } = await supabaseAdmin
-        .from('user_settings')
-        .select('push_notifications')
-        .eq('user_id', followerId)
-        .maybeSingle();
+      await notificationRepository.create({
+        userId: followerId,
+        type: 'post',
+        title: 'New post from someone you follow',
+        body,
+        url: postUrl,
+        actorId: authorId,
+        metadata: postId ? { postId } : {},
+      });
+      notified += 1;
 
-      if (prefs && prefs.push_notifications === false) continue;
+      if (!ensureVapid() || !(await shouldSendPush(followerId))) continue;
 
       const { data: subs } = await supabaseAdmin
         .from('push_subscriptions')
@@ -180,18 +189,19 @@ export const notificationService = {
         const ok = await this.sendPush(sub, {
           title: 'New post from someone you follow',
           body,
-          url: '/community',
+          url: postUrl,
         });
         if (ok) sent += 1;
       }
     }
 
-    return { sent };
+    return { sent, notified };
   },
 
   async notifyNewFollower(followingId, followerId) {
     const actor = await resolveActor(followerId);
-    const profileUrl = actor.username ? `/${actor.username}` : '/community';
+    const profileSlug = actor.username || actor.id;
+    const profileUrl = profileSlug ? `/${encodeURIComponent(profileSlug)}` : '/community';
 
     await notificationRepository.create({
       userId: followingId,
@@ -236,7 +246,7 @@ export const notificationService = {
         body: preview,
         url: messageUrl,
         actorId: senderId,
-        metadata: { chatId },
+        metadata: { chatId, senderId },
       });
 
       await pushToUser(recipientId, {

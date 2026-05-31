@@ -12,7 +12,8 @@ export const notificationController = {
     try {
       const page = parseInt(req.query.page || '1', 10);
       const limit = parseInt(req.query.limit || '20', 10);
-      const result = await notificationRepository.list(req.user.id, page, limit);
+      const unreadOnly = req.query.unreadOnly === 'true' || req.query.unread === '1';
+      const result = await notificationRepository.list(req.user.id, page, limit, { unreadOnly });
       res.status(200).json(formatSuccess(result, 'Notifications retrieved'));
     } catch (error) {
       next(error);
