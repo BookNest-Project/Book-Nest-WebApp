@@ -41,6 +41,8 @@ logger.info('Email transport', {
   mode: getEmailTransportMode(),
   resend: isResendConfigured(),
   smtp: isSmtpConfigured(),
+  emailFrom: process.env.EMAIL_FROM?.trim() || '(default: onboarding@resend.dev)',
+  frontendUrl: process.env.FRONTEND_URL?.trim() || '(not set)',
 });
 
 const app = express();

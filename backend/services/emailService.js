@@ -108,8 +108,14 @@ async function sendViaResend({ to, subject, html }) {
     });
 
     if (error) {
-      logger.error('Resend API error', { to, subject, error: error.message });
-      return { sent: false, error: error.message };
+      logger.error('Resend API error', {
+        to,
+        subject,
+        from: getFromAddress(),
+        error: error.message,
+        name: error.name,
+      });
+      return { sent: false, error: error.message, via: 'resend' };
     }
 
     logger.info('Email sent via Resend', { to, subject, id: data?.id });
@@ -143,11 +149,31 @@ async function sendViaSmtp({ to, subject, html }) {
   }
 }
 
+function mapResendError(message) {
+  const lower = (message || '').toLowerCase();
+  if (lower.includes('only send') && lower.includes('your own')) {
+    return `${message} Add and verify your domain in Resend, or test with the email on your Resend account.`;
+  }
+  if (lower.includes('invalid') && lower.includes('from')) {
+    return `${message} Set EMAIL_FROM=BookNest <onboarding@resend.dev> on Railway until your domain is verified.`;
+  }
+  return message;
+}
+
 async function deliverEmail({ to, subject, html, devLink }) {
   if (isResendConfigured()) {
     const resendResult = await sendViaResend({ to, subject, html });
     if (resendResult?.sent) return resendResult;
-    if (resendResult && !isSmtpConfigured()) return resendResult;
+
+    // In production, do not fall back to SMTP when Resend is configured — Railway blocks SMTP.
+    const skipSmtpFallback =
+      process.env.NODE_ENV === 'production' || !isSmtpConfigured();
+    if (skipSmtpFallback && resendResult) {
+      return {
+        ...resendResult,
+        error: mapResendError(resendResult.error),
+      };
+    }
   }
 
   if (isSmtpConfigured()) {
