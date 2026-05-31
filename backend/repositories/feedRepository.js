@@ -75,8 +75,9 @@ async function loadTagsForPosts(postIds) {
   return byPost;
 }
 
-function formatPostRow(post, likesMap = {}, tagsMap = new Map()) {
+function formatPostRow(post, likesMap = {}, tagsMap = new Map(), followingIds = null) {
   const user = Array.isArray(post.user) ? post.user[0] : post.user;
+  const authorId = user?.id;
   return {
     id: post.id,
     content: post.content,
@@ -87,9 +88,10 @@ function formatPostRow(post, likesMap = {}, tagsMap = new Map()) {
     shareCount: post.share_count || 0,
     createdAt: post.created_at,
     isLiked: !!likesMap[post.id],
+    isFromFollowing: followingIds ? followingIds.has(authorId) : false,
     tags: tagsMap.get(post.id) || [],
     author: {
-      id: user?.id,
+      id: authorId,
       name: user?.email?.split('@')[0] || 'User',
       username: user?.email?.split('@')[0] || 'user',
       avatarUrl: user?.avatar_url,
@@ -98,7 +100,7 @@ function formatPostRow(post, likesMap = {}, tagsMap = new Map()) {
   };
 }
 
-async function formatPostsList(posts, viewerUserId) {
+async function formatPostsList(posts, viewerUserId, followingIds = null) {
   const postIds = (posts || []).map((p) => p.id);
   let likesMap = {};
 
@@ -117,7 +119,7 @@ async function formatPostsList(posts, viewerUserId) {
   }
 
   const tagsMap = await loadTagsForPosts(postIds);
-  return (posts || []).map((post) => formatPostRow(post, likesMap, tagsMap));
+  return (posts || []).map((post) => formatPostRow(post, likesMap, tagsMap, followingIds));
 }
 
 async function savePostTags(postId, taggedUsers = [], taggedBooks = []) {
@@ -145,20 +147,18 @@ export const feedRepository = {
         .select('following_id')
         .eq('follower_id', userId);
 
-      const followingIds = following?.map((f) => f.following_id) || [];
-      const allUserIds = [...followingIds, userId];
+      const followingIds = new Set((following || []).map((f) => f.following_id));
 
       const { data: posts, error, count } = await supabaseAdmin
         .from('posts')
         .select(POST_SELECT, { count: 'exact' })
-        .in('user_id', allUserIds)
         .eq('status', 'published')
         .order('created_at', { ascending: false })
         .range(from, to);
 
       if (error) throw error;
 
-      const formattedPosts = await formatPostsList(posts, userId);
+      const formattedPosts = await formatPostsList(posts, userId, followingIds);
 
       return {
         posts: formattedPosts,
