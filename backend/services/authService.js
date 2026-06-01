@@ -253,6 +253,10 @@ export const authService = {
     const confirmedAt =
       authUser.email_confirmed_at || authUser.confirmed_at || new Date().toISOString();
 
+    if (!authUser.email_confirmed_at && !authUser.confirmed_at) {
+      await authRepository.markEmailConfirmedInAuth(dbUser.id);
+    }
+
     await userRepository.updateEmailVerification(dbUser.id, true, confirmedAt);
 
     logger.info('Email confirmed via link', { userId: dbUser.id, email: dbUser.email });

@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
-import { logResolvedUrls } from './utils/envUrls.js';
+import { logResolvedUrls, getFrontendUrl } from './utils/envUrls.js';
 import { isSmtpConfigured, isResendConfigured, isBrevoConfigured, getEmailTransportMode, getResolvedFromAddress } from './services/emailService.js';
 
 // Import routes
@@ -54,10 +54,25 @@ app.set('trust proxy', 1);
 
 // Health check (MUST be before other middleware)
 app.get("/api/health", (req, res) => {
+  let frontendUrl = null;
+  let verifyRedirect = null;
+  try {
+    frontendUrl = getFrontendUrl();
+    verifyRedirect = `${frontendUrl}/auth/verify`;
+  } catch {
+    // optional — health still OK
+  }
+
   return res.status(200).json({
     status: "OK",
     service: "BookNest API",
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    email: {
+      transport: getEmailTransportMode(),
+      from: getResolvedFromAddress(),
+      verificationRedirect: verifyRedirect,
+    },
+    frontendUrl,
   });
 });
 

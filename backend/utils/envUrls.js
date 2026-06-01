@@ -133,6 +133,10 @@ export function logResolvedUrls(logger) {
       frontend,
       chapa_callback: `${backend}/api/webhooks/chapa`,
       chapa_return: `${frontend}/checkout/result`,
+      auth_verify_redirect: `${frontend}/auth/verify`,
+      auth_reset_redirect: `${frontend}/reset-password`,
+      supabase_hint:
+        'Add auth_verify_redirect + auth_reset_redirect (+ /verify, /auth/callback) under Supabase → Authentication → URL Configuration → Redirect URLs',
     });
   } catch (err) {
     logger.error('URL configuration error — server will start but payments/email links may fail', {

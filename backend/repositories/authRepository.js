@@ -329,6 +329,18 @@ export const authRepository = {
     return this.getUserFromToken(accessToken);
   },
 
+  /** Keep Supabase Auth in sync when user completes our verification link. */
+  async markEmailConfirmedInAuth(userId) {
+    const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      email_confirm: true,
+    });
+    if (error) {
+      logger.warn('markEmailConfirmedInAuth failed', { userId, error: error.message });
+      return null;
+    }
+    return data?.user ?? null;
+  },
+
   /**
    * Get user from token
    */
