@@ -266,10 +266,19 @@ async function sendViaSmtp({ to, subject, html }) {
   }
 }
 
+function isBrevoNotActivatedError(message) {
+  const lower = (message || '').toLowerCase();
+  return lower.includes('not yet activated') || lower.includes('smtp account is not');
+}
+
 function mapBrevoError(message) {
   const lower = (message || '').toLowerCase();
-  if (lower.includes('not yet activated') || lower.includes('smtp account is not')) {
-    return 'Brevo transactional email is not activated on your account yet. In Brevo open Help → Contact support and ask them to activate transactional/API sending for BookNest (signup verification emails). This usually takes 1–2 business days.';
+  if (isBrevoNotActivatedError(message)) {
+    return (
+      'Brevo transactional email is not activated on your account yet. ' +
+      'On Railway: remove BREVO_API_KEY and use RESEND_API_KEY instead (see .env.example), ' +
+      'or contact Brevo support to activate API sending (usually 1–2 business days).'
+    );
   }
   if (lower.includes('sender') && (lower.includes('not valid') || lower.includes('verify'))) {
     return `${message} In Brevo go to Settings → Senders and verify ${parseSender(getFromAddress()).email}.`;
@@ -291,29 +300,46 @@ function mapResendError(message) {
   return message;
 }
 
+function formatDeliverFailure(failures) {
+  const resendFail = failures.find((f) => f.via === 'resend');
+  const brevoFail = failures.find((f) => f.via === 'brevo');
+
+  if (resendFail?.error && brevoFail?.error && isBrevoNotActivatedError(brevoFail.error)) {
+    return mapResendError(resendFail.error);
+  }
+  if (resendFail?.error) return mapResendError(resendFail.error);
+  if (brevoFail?.error) return mapBrevoError(brevoFail.error);
+  return failures[0]?.error || 'Failed to send email';
+}
+
 async function deliverEmail({ to, subject, html, devLink }) {
+  const failures = [];
+
   if (isBrevoConfigured()) {
     const brevoResult = await sendViaBrevo({ to, subject, html });
     if (brevoResult?.sent) return brevoResult;
     if (brevoResult) {
-      return {
-        ...brevoResult,
-        error: mapBrevoError(brevoResult.error),
-      };
+      failures.push(brevoResult);
+      logger.warn('Brevo send failed, trying next email transport', {
+        to,
+        error: brevoResult.error,
+      });
     }
   }
 
   if (isResendConfigured()) {
     const resendResult = await sendViaResend({ to, subject, html });
     if (resendResult?.sent) return resendResult;
+    if (resendResult) failures.push(resendResult);
 
     // In production, do not fall back to SMTP when Resend is configured — Railway blocks SMTP.
     const skipSmtpFallback =
       process.env.NODE_ENV === 'production' || !isSmtpConfigured();
-    if (skipSmtpFallback && resendResult) {
+    if (skipSmtpFallback && failures.length > 0) {
       return {
-        ...resendResult,
-        error: mapResendError(resendResult.error),
+        sent: false,
+        error: formatDeliverFailure(failures),
+        via: resendResult?.via || 'resend',
       };
     }
   }
@@ -332,11 +358,15 @@ async function deliverEmail({ to, subject, html, devLink }) {
     return { sent: true, devMode: true };
   }
 
+  if (failures.length > 0) {
+    return { sent: false, error: formatDeliverFailure(failures) };
+  }
+
   logger.error('No email transport configured', { to, subject });
   return {
     sent: false,
     error:
-      'Email service is not configured. On Railway set BREVO_API_KEY (recommended) or RESEND_API_KEY.',
+      'Email service is not configured. On Railway set RESEND_API_KEY (quick start) or BREVO_API_KEY after transactional sending is activated.',
   };
 }
 

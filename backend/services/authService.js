@@ -129,9 +129,7 @@ export const authService = {
     if (!emailResult.sent) {
       return {
         message:
-          resumed
-            ? 'We updated your signup details but could not send the verification email. Use resend verification below.'
-            : 'Account created. We could not send the verification email right now — use resend verification on the next screen.',
+          'Account created. We could not send the verification email right now — use resend verification on the next screen.',
         email: normalizedEmail,
         resumed,
         verificationEmailPending: true,
@@ -144,9 +142,7 @@ export const authService = {
     });
 
     return {
-      message: resumed
-        ? 'You already started signing up — we sent a fresh verification email. Check your inbox.'
-        : 'Verification email sent. Please check your inbox.',
+      message: 'Verification email sent. Please check your inbox.',
       email: normalizedEmail,
       resumed,
     };
