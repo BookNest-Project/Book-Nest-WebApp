@@ -53,20 +53,24 @@ async function findUserForPublicProfile(slug, currentUserId) {
     return { user: data, error };
   }
 
-  const { data: readerMatches, error: readerError } = await supabaseAdmin
+  const { data: readerProfiles, error: readerError } = await supabaseAdmin
     .from('reader_profiles')
-    .select('user_id')
-    .ilike('username', slug);
+    .select('user_id, username');
 
-  if (readerError) return { user: null, error: readerError };
+  if (!readerError && readerProfiles?.length) {
+    const readerMatch = readerProfiles.find((row) => {
+      const normalized = row.username?.replace(/^@/, '').trim().toLowerCase();
+      return normalized === slug;
+    });
 
-  if (readerMatches?.length === 1) {
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select(USER_PUBLIC_SELECT)
-      .eq('id', readerMatches[0].user_id)
-      .maybeSingle();
-    return { user: data, error };
+    if (readerMatch) {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .select(USER_PUBLIC_SELECT)
+        .eq('id', readerMatch.user_id)
+        .maybeSingle();
+      return { user: data, error };
+    }
   }
 
   const { data: candidates, error } = await supabaseAdmin
@@ -346,6 +350,7 @@ export const profileRepository = {
 
       const { reader, author, publisher } = pickRoleProfile(user);
       let publicName = user.email.split('@')[0];
+      let publicUsername = user.email.split('@')[0].toLowerCase();
       if (user.role === 'reader' && reader?.display_name) {
         publicName = reader.display_name;
       } else if (user.role === 'author' && author?.pen_name) {
@@ -354,10 +359,21 @@ export const profileRepository = {
         publicName = publisher.company_name;
       }
 
+      const { data: readerUsernameRow } = await supabaseAdmin
+        .from('reader_profiles')
+        .select('username')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (readerUsernameRow?.username) {
+        publicUsername =
+          readerUsernameRow.username.replace(/^@/, '').trim().toLowerCase() || publicUsername;
+      }
+
       const publicProfile = {
         id: user.id,
         name: publicName,
-        username: user.email.split('@')[0],
+        username: publicUsername,
         role: user.role,
         avatarUrl: user.avatar_url,
         joinedAt: user.created_at,

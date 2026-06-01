@@ -81,8 +81,38 @@ function formatMessage(msg, display, sharedPost = null) {
     isRead: msg.is_read,
     isDeleted: deletedForEveryone,
     deletedForEveryone,
+    editedAt: msg.edited_at ?? null,
     createdAt: msg.created_at,
   };
+}
+
+/** Base columns — works before edited_at migration is applied */
+const MESSAGE_SELECT = `
+  id,
+  content,
+  sender_id,
+  post_id,
+  is_read,
+  deleted_for_everyone_at,
+  created_at,
+  users!sender_id ( id, email, avatar_url )
+`;
+
+const MESSAGE_SELECT_WITH_EDIT = `
+  id,
+  content,
+  sender_id,
+  post_id,
+  is_read,
+  deleted_for_everyone_at,
+  edited_at,
+  created_at,
+  users!sender_id ( id, email, avatar_url )
+`;
+
+function isMissingEditedAtColumn(error) {
+  const msg = error?.message || '';
+  return /edited_at/i.test(msg) && /does not exist|column/i.test(msg);
 }
 
 async function attachSharedPosts(messages, viewerUserId) {
@@ -382,26 +412,25 @@ export const chatRepository = {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
-      const { data: messages, error, count } = await supabaseAdmin
+      let messagesResult = await supabaseAdmin
         .from('messages')
-        .select(
-          `
-          id,
-          content,
-          sender_id,
-          post_id,
-          is_read,
-          deleted_for_everyone_at,
-          created_at,
-          users!sender_id ( id, email, avatar_url )
-        `,
-          { count: 'exact' }
-        )
+        .select(MESSAGE_SELECT_WITH_EDIT, { count: 'exact' })
         .eq('chat_id', chatId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
-      if (error) throw error;
+      if (messagesResult.error && isMissingEditedAtColumn(messagesResult.error)) {
+        messagesResult = await supabaseAdmin
+          .from('messages')
+          .select(MESSAGE_SELECT, { count: 'exact' })
+          .eq('chat_id', chatId)
+          .order('created_at', { ascending: false })
+          .range(from, to);
+      }
+
+      if (messagesResult.error) throw messagesResult.error;
+      const messages = messagesResult.data;
+      const count = messagesResult.count;
 
       await supabaseAdmin
         .from('messages')
@@ -454,7 +483,7 @@ export const chatRepository = {
         await feedRepository.getPostById(postId, userId);
       }
 
-      const { data: message, error } = await supabaseAdmin
+      let insertResult = await supabaseAdmin
         .from('messages')
         .insert({
           chat_id: chatId,
@@ -462,21 +491,24 @@ export const chatRepository = {
           content: trimmed || 'Shared a post',
           post_id: postId || null,
         })
-        .select(
-          `
-          id,
-          content,
-          sender_id,
-          post_id,
-          is_read,
-          deleted_for_everyone_at,
-          created_at,
-          users!sender_id ( id, email, avatar_url )
-        `
-        )
+        .select(MESSAGE_SELECT_WITH_EDIT)
         .single();
 
-      if (error) throw error;
+      if (insertResult.error && isMissingEditedAtColumn(insertResult.error)) {
+        insertResult = await supabaseAdmin
+          .from('messages')
+          .insert({
+            chat_id: chatId,
+            sender_id: userId,
+            content: trimmed || 'Shared a post',
+            post_id: postId || null,
+          })
+          .select(MESSAGE_SELECT)
+          .single();
+      }
+
+      if (insertResult.error) throw insertResult.error;
+      const message = insertResult.data;
 
       // Restore the conversation for recipients who previously deleted/hid it
       await supabaseAdmin
@@ -563,6 +595,53 @@ export const chatRepository = {
 
     if (updateError) throw updateError;
     return { success: true };
+  },
+
+  async editMessage(messageId, userId, content) {
+    const { data: message, error } = await supabaseAdmin
+      .from('messages')
+      .select('id, chat_id, sender_id, deleted_for_everyone_at, post_id')
+      .eq('id', messageId)
+      .single();
+
+    if (error) throw error;
+    if (message.sender_id !== userId) {
+      throw new Error('Only the sender can edit this message');
+    }
+    if (message.deleted_for_everyone_at) {
+      throw new Error('Message was deleted');
+    }
+    if (message.post_id) {
+      throw new Error('Shared posts cannot be edited');
+    }
+
+    const trimmed = content?.trim();
+    if (!trimmed) throw new Error('Content is required');
+
+    await assertParticipant(message.chat_id, userId);
+
+    let updatePayload = { content: trimmed, edited_at: new Date().toISOString() };
+    let updateResult = await supabaseAdmin
+      .from('messages')
+      .update(updatePayload)
+      .eq('id', messageId)
+      .select(MESSAGE_SELECT_WITH_EDIT)
+      .single();
+
+    if (updateResult.error && isMissingEditedAtColumn(updateResult.error)) {
+      updateResult = await supabaseAdmin
+        .from('messages')
+        .update({ content: trimmed })
+        .eq('id', messageId)
+        .select(MESSAGE_SELECT)
+        .single();
+    }
+
+    if (updateResult.error) throw updateResult.error;
+    const updated = updateResult.data;
+
+    const display = await resolveUserDisplay(updated.users);
+    return formatMessage(updated, { ...display, name: 'You' }, null);
   },
 
   async createGroupInvite(chatId, userId) {

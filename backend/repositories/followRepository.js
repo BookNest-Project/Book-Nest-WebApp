@@ -26,6 +26,20 @@ async function formatFollowUser(userRow) {
   };
 }
 
+async function loadUsersByIds(userIds) {
+  if (!userIds.length) return new Map();
+
+  const { data: users, error } = await supabaseAdmin
+    .from('users')
+    .select('id, email, avatar_url, bio, role')
+    .in('id', userIds);
+
+  if (error) throw error;
+
+  const formatted = await Promise.all((users || []).map((user) => formatFollowUser(user)));
+  return new Map(formatted.filter(Boolean).map((user) => [user.id, user]));
+}
+
 export const followRepository = {
   async follow(followerId, followingId) {
     try {
@@ -86,29 +100,20 @@ export const followRepository = {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
-      const { data: followers, error, count } = await supabaseAdmin
+      const { data: rows, error, count } = await supabaseAdmin
         .from('follows')
-        .select(`
-          follower_id,
-          users!follower_id (
-            id,
-            email,
-            avatar_url,
-            bio,
-            role
-          )
-        `, { count: 'exact' })
+        .select('follower_id', { count: 'exact' })
         .eq('following_id', userId)
+        .order('follower_id', { ascending: true })
         .range(from, to);
 
       if (error) throw error;
 
-      const formattedFollowers = await Promise.all(
-        (followers || []).map(async (f) => formatFollowUser(f.users))
-      );
+      const userIds = [...new Set((rows || []).map((row) => row.follower_id).filter(Boolean))];
+      const userMap = await loadUsersByIds(userIds);
 
       return {
-        followers: formattedFollowers.filter(Boolean),
+        followers: userIds.map((id) => userMap.get(id)).filter(Boolean),
         total: count || 0,
         page,
         limit,
@@ -125,29 +130,20 @@ export const followRepository = {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
-      const { data: following, error, count } = await supabaseAdmin
+      const { data: rows, error, count } = await supabaseAdmin
         .from('follows')
-        .select(`
-          following_id,
-          users!following_id (
-            id,
-            email,
-            avatar_url,
-            bio,
-            role
-          )
-        `, { count: 'exact' })
+        .select('following_id', { count: 'exact' })
         .eq('follower_id', userId)
+        .order('following_id', { ascending: true })
         .range(from, to);
 
       if (error) throw error;
 
-      const formattedFollowing = await Promise.all(
-        (following || []).map(async (f) => formatFollowUser(f.users))
-      );
+      const userIds = [...new Set((rows || []).map((row) => row.following_id).filter(Boolean))];
+      const userMap = await loadUsersByIds(userIds);
 
       return {
-        following: formattedFollowing.filter(Boolean),
+        following: userIds.map((id) => userMap.get(id)).filter(Boolean),
         total: count || 0,
         page,
         limit,

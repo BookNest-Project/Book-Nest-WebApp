@@ -21,6 +21,7 @@ router.delete('/direct/:chatId', chatController.deleteDirectChat);
 
 router.delete('/messages/:messageId/me', chatController.deleteMessageForMe);
 router.delete('/messages/:messageId/everyone', chatController.deleteMessageForEveryone);
+router.patch('/messages/:messageId', chatController.editMessage);
 
 router.get('/:chatId/members', chatController.getGroupMembers);
 router.get('/:chatId', chatController.getChatById);

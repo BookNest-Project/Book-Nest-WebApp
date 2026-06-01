@@ -138,6 +138,26 @@ export const chatController = {
     }
   },
 
+  async editMessage(req, res, next) {
+    try {
+      const { content } = req.body;
+      const message = await chatRepository.editMessage(req.params.messageId, req.user.id, content);
+      res.status(200).json(formatSuccess(message, 'Message updated'));
+    } catch (error) {
+      if (
+        error.message === 'Only the sender can edit this message' ||
+        error.message === 'Message was deleted' ||
+        error.message === 'Shared posts cannot be edited'
+      ) {
+        return res.status(403).json({ error: error.message });
+      }
+      if (error.message === 'Content is required') {
+        return res.status(400).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
   async createGroupInvite(req, res, next) {
     try {
       const invite = await chatRepository.createGroupInvite(req.params.chatId, req.user.id);
