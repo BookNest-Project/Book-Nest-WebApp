@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 import { logResolvedUrls, getFrontendUrl } from './utils/envUrls.js';
 import { isSmtpConfigured, isResendConfigured, isBrevoConfigured, getEmailTransportMode, getResolvedFromAddress } from './services/emailService.js';
+import { describeAuthEmailPolicy, shouldAttemptSmtp } from './services/authEmailPolicy.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -39,9 +40,11 @@ dotenv.config();
 logResolvedUrls(logger);
 logger.info('Email transport', {
   mode: getEmailTransportMode(),
+  authEmailPolicy: describeAuthEmailPolicy(),
   brevo: isBrevoConfigured(),
   resend: isResendConfigured(),
   smtp: isSmtpConfigured(),
+  smtpAttemptedInThisEnv: shouldAttemptSmtp(),
   emailFrom: getResolvedFromAddress(),
   frontendUrl: process.env.FRONTEND_URL?.trim() || '(not set)',
 });

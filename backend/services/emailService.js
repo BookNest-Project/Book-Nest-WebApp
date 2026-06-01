@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { logger } from '../utils/logger.js';
+import { shouldAttemptSmtp, getAuthEmailProvider } from './authEmailPolicy.js';
 
 let transporter = null;
 let resendClient = null;
@@ -29,13 +30,14 @@ export function isSmtpConfigured() {
 
 /** Preferred transport for production (Railway blocks SMTP on most plans). */
 export function getEmailTransportMode() {
+  if (getAuthEmailProvider() === 'supabase') return 'supabase';
   if (isBrevoConfigured()) return 'brevo';
   if (isResendConfigured()) return 'resend';
-  if (isSmtpConfigured()) return 'smtp';
+  if (shouldAttemptSmtp()) return 'smtp';
   if (process.env.NODE_ENV !== 'production' || process.env.AUTH_RELAX_EMAIL_LIMITS === 'true') {
     return 'dev-log';
   }
-  return 'none';
+  return 'supabase-fallback';
 }
 
 function getResendClient() {
@@ -331,22 +333,12 @@ async function deliverEmail({ to, subject, html, devLink }) {
     const resendResult = await sendViaResend({ to, subject, html });
     if (resendResult?.sent) return resendResult;
     if (resendResult) failures.push(resendResult);
-
-    // In production, do not fall back to SMTP when Resend is configured — Railway blocks SMTP.
-    const skipSmtpFallback =
-      process.env.NODE_ENV === 'production' || !isSmtpConfigured();
-    if (skipSmtpFallback && failures.length > 0) {
-      return {
-        sent: false,
-        error: formatDeliverFailure(failures),
-        via: resendResult?.via || 'resend',
-      };
-    }
   }
 
-  if (isSmtpConfigured()) {
+  if (shouldAttemptSmtp()) {
     const smtpResult = await sendViaSmtp({ to, subject, html });
-    if (smtpResult) return smtpResult;
+    if (smtpResult?.sent) return smtpResult;
+    if (smtpResult) failures.push(smtpResult);
   }
 
   if (allowDevEmailLog()) {
@@ -366,7 +358,7 @@ async function deliverEmail({ to, subject, html, devLink }) {
   return {
     sent: false,
     error:
-      'Email service is not configured. On Railway set RESEND_API_KEY (quick start) or BREVO_API_KEY after transactional sending is activated.',
+      'Email service is not configured. For auth emails set AUTH_EMAIL_PROVIDER=supabase on Railway, or configure Brevo/Resend.',
   };
 }
 

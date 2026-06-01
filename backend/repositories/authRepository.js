@@ -9,6 +9,14 @@ import {
   sendPasswordResetEmail,
   assertEmailSent,
 } from '../services/emailService.js';
+import {
+  sendVerificationViaSupabase,
+  sendPasswordResetViaSupabase,
+} from '../services/supabaseAuthEmail.js';
+import {
+  shouldUseSupabaseAuthMailerFirst,
+  shouldTrySupabaseAuthMailerFallback,
+} from '../services/authEmailPolicy.js';
 
 function getEmailVerificationRedirectUrl() {
   return `${getFrontendUrl()}/auth/verify`;
@@ -68,24 +76,56 @@ async function generateAuthLink(type, email, { redirectTo, password } = {}) {
 
 async function deliverVerificationEmail(email, { password, isExistingUser = false } = {}) {
   const redirectTo = getEmailVerificationRedirectUrl();
+
+  if (shouldUseSupabaseAuthMailerFirst()) {
+    const supabaseResult = await sendVerificationViaSupabase(email, redirectTo);
+    assertEmailSent(supabaseResult, 'Failed to send verification email');
+    logger.info('Verification email dispatched', {
+      email,
+      redirectTo,
+      via: supabaseResult.via,
+    });
+    return;
+  }
+
+  const redirectToCustom = redirectTo;
   let verifyLink;
 
   // Existing accounts: magiclink avoids Supabase "Database error finding user" on signup links
   if (isExistingUser) {
-    verifyLink = await generateAuthLink('magiclink', email, { redirectTo });
+    verifyLink = await generateAuthLink('magiclink', email, { redirectTo: redirectToCustom });
   } else {
     try {
-      verifyLink = await generateAuthLink('signup', email, { redirectTo, password });
+      verifyLink = await generateAuthLink('signup', email, {
+        redirectTo: redirectToCustom,
+        password,
+      });
     } catch (signupError) {
       logger.warn('Signup verification link failed, trying magic link', {
         email,
         error: signupError.message,
       });
-      verifyLink = await generateAuthLink('magiclink', email, { redirectTo });
+      verifyLink = await generateAuthLink('magiclink', email, { redirectTo: redirectToCustom });
     }
   }
 
   const result = await sendVerificationEmail(email, verifyLink);
+
+  if (!result.sent && shouldTrySupabaseAuthMailerFallback()) {
+    logger.warn('Custom verification email failed, falling back to Supabase mailer', {
+      email,
+      error: result.error,
+    });
+    const supabaseResult = await sendVerificationViaSupabase(email, redirectTo);
+    assertEmailSent(supabaseResult, 'Failed to send verification email');
+    logger.info('Verification email dispatched', {
+      email,
+      redirectTo,
+      via: supabaseResult.via,
+    });
+    return;
+  }
+
   assertEmailSent(result, 'Failed to send verification email');
   logger.info('Verification email dispatched', {
     email,
@@ -96,10 +136,34 @@ async function deliverVerificationEmail(email, { password, isExistingUser = fals
 
 async function deliverPasswordResetEmail(email) {
   const redirectTo = getPasswordResetRedirectUrl();
+
+  if (shouldUseSupabaseAuthMailerFirst()) {
+    const supabaseResult = await sendPasswordResetViaSupabase(email, redirectTo);
+    assertEmailSent(supabaseResult, 'Failed to send password reset email');
+    logger.info('Password reset email sent via Supabase', { email, redirectTo });
+    return;
+  }
+
   const resetLink = await generateAuthLink('recovery', email, { redirectTo });
   const result = await sendPasswordResetEmail(email, resetLink);
+
+  if (!result.sent && shouldTrySupabaseAuthMailerFallback()) {
+    logger.warn('Custom password reset email failed, falling back to Supabase mailer', {
+      email,
+      error: result.error,
+    });
+    const supabaseResult = await sendPasswordResetViaSupabase(email, redirectTo);
+    assertEmailSent(supabaseResult, 'Failed to send password reset email');
+    logger.info('Password reset email sent via Supabase', { email, redirectTo });
+    return;
+  }
+
   assertEmailSent(result, 'Failed to send password reset email');
-  logger.info('Password reset email sent via SMTP', { email, redirectTo, devMode: !!result.devMode });
+  logger.info('Password reset email sent', {
+    email,
+    redirectTo,
+    via: result.devMode ? 'dev-console' : result.via || 'email',
+  });
 }
 
 export const authRepository = {
