@@ -8,7 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
 import { logResolvedUrls, getFrontendUrl } from './utils/envUrls.js';
 import { isSmtpConfigured, isResendConfigured, isBrevoConfigured, getEmailTransportMode, getResolvedFromAddress } from './services/emailService.js';
-import { describeAuthEmailPolicy, shouldAttemptSmtp } from './services/authEmailPolicy.js';
+import { describeAuthEmailPolicy, shouldAttemptSmtp, shouldRegisterViaPublicSupabaseSignUp } from './services/authEmailPolicy.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js'; 
@@ -41,12 +41,20 @@ logResolvedUrls(logger);
 logger.info('Email transport', {
   mode: getEmailTransportMode(),
   authEmailPolicy: describeAuthEmailPolicy(),
+  supabaseSignUpSendsEmail: shouldRegisterViaPublicSupabaseSignUp(),
   brevo: isBrevoConfigured(),
   resend: isResendConfigured(),
   smtp: isSmtpConfigured(),
   smtpAttemptedInThisEnv: shouldAttemptSmtp(),
   emailFrom: getResolvedFromAddress(),
   frontendUrl: process.env.FRONTEND_URL?.trim() || '(not set)',
+  authVerifyRedirect: (() => {
+    try {
+      return `${getFrontendUrl()}/auth/verify`;
+    } catch {
+      return null;
+    }
+  })(),
 });
 
 const app = express();
@@ -72,8 +80,13 @@ app.get("/api/health", (req, res) => {
     time: new Date().toISOString(),
     email: {
       transport: getEmailTransportMode(),
+      authEmailPolicy: describeAuthEmailPolicy(),
+      supabaseSignUpSendsEmail: shouldRegisterViaPublicSupabaseSignUp(),
       from: getResolvedFromAddress(),
       verificationRedirect: verifyRedirect,
+      supabaseChecklist: verifyRedirect
+        ? `Add ${verifyRedirect} to Supabase → Auth → URL Configuration → Redirect URLs`
+        : 'Set FRONTEND_URL on Railway',
     },
     frontendUrl,
   });

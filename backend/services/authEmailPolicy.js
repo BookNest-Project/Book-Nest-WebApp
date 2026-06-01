@@ -37,6 +37,18 @@ export function shouldUseSupabaseAuthMailerFirst() {
   return getAuthEmailProvider() === 'supabase';
 }
 
+/** New reader signup via public signUp() so Supabase sends the confirmation email. */
+export function shouldRegisterViaPublicSupabaseSignUp() {
+  const provider = getAuthEmailProvider();
+  if (provider === 'supabase') return true;
+  if (provider === 'auto' && isProductionDeploy()) return true;
+  return false;
+}
+
+export function shouldSkipCustomAuthEmailAfterSignUp() {
+  return shouldRegisterViaPublicSupabaseSignUp();
+}
+
 export function shouldTrySupabaseAuthMailerFallback() {
   const provider = getAuthEmailProvider();
   if (provider === 'custom' || provider === 'smtp') return false;

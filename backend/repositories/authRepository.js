@@ -12,10 +12,12 @@ import {
 import {
   sendVerificationViaSupabase,
   sendPasswordResetViaSupabase,
+  signUpReaderViaSupabasePublic,
 } from '../services/supabaseAuthEmail.js';
 import {
   shouldUseSupabaseAuthMailerFirst,
   shouldTrySupabaseAuthMailerFallback,
+  shouldRegisterViaPublicSupabaseSignUp,
 } from '../services/authEmailPolicy.js';
 
 function getEmailVerificationRedirectUrl() {
@@ -262,7 +264,17 @@ export const authRepository = {
    * Reader self-signup — creates auth user (does not send email; use sendVerificationEmailForUser).
    */
   async signUpReader(email, password, metadata = {}) {
+    if (shouldRegisterViaPublicSupabaseSignUp()) {
+      return signUpReaderViaSupabasePublic(email, password, {
+        ...metadata,
+        redirectTo: getEmailVerificationRedirectUrl(),
+      });
+    }
     return this.createUser(email, password, metadata);
+  },
+
+  usesSupabaseSignUpEmail() {
+    return shouldRegisterViaPublicSupabaseSignUp();
   },
 
   async sendVerificationEmailForUser(email, password, { isExistingUser = false } = {}) {

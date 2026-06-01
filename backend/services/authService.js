@@ -122,9 +122,11 @@ export const authService = {
       throw error;
     }
 
-    const emailResult = await sendVerificationEmailSafe(normalizedEmail, password, {
-      isExistingUser: resumed,
-    });
+    const emailResult = authRepository.usesSupabaseSignUpEmail() && !resumed
+      ? { sent: true }
+      : await sendVerificationEmailSafe(normalizedEmail, password, {
+          isExistingUser: resumed,
+        });
 
     if (!emailResult.sent) {
       return {
