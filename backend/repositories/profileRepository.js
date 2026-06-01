@@ -389,15 +389,9 @@ export const profileRepository = {
         postCount: 0,
         readingStats: undefined,
         achievements: undefined,
-        photos: [],
       };
 
       if (canViewDetails) {
-        try {
-          publicProfile.photos = await this.getProfilePhotos(user.id);
-        } catch {
-          publicProfile.photos = [];
-        }
         publicProfile.bio = user.bio;
         publicProfile.location = user.location;
         if (user.role === 'author' || user.role === 'publisher') {

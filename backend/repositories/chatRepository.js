@@ -637,17 +637,25 @@ export const chatRepository = {
       }
 
       let replyTo = null;
-      if (message.reply_to_message_id) {
+      const replyParentId = message.reply_to_message_id || replyToMessageId || null;
+      if (replyParentId) {
         let replyQuery = await supabaseAdmin
           .from('messages')
           .select(MESSAGE_SELECT_WITH_REPLY)
-          .eq('id', message.reply_to_message_id)
+          .eq('id', replyParentId)
           .maybeSingle();
         if (replyQuery.error && isMissingReplyColumn(replyQuery.error)) {
           replyQuery = await supabaseAdmin
             .from('messages')
             .select(MESSAGE_SELECT_WITH_EDIT)
-            .eq('id', message.reply_to_message_id)
+            .eq('id', replyParentId)
+            .maybeSingle();
+        }
+        if (replyQuery.error && isMissingEditedAtColumn(replyQuery.error)) {
+          replyQuery = await supabaseAdmin
+            .from('messages')
+            .select(MESSAGE_SELECT)
+            .eq('id', replyParentId)
             .maybeSingle();
         }
         const { data: replyRow } = replyQuery;
