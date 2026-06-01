@@ -20,7 +20,17 @@ export function getAuthEmailProvider() {
 }
 
 export function isProductionDeploy() {
-  return process.env.NODE_ENV === 'production';
+  return (
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+    Boolean(process.env.RAILWAY_PUBLIC_DOMAIN) ||
+    Boolean(process.env.RAILWAY_STATIC_URL)
+  );
+}
+
+/** Hosted backend (Railway etc.) — never use Gmail SMTP from the server. */
+export function isHostedBackend() {
+  return isProductionDeploy();
 }
 
 /** Railway and similar hosts block outbound SMTP — never wait 15s there. */
@@ -29,19 +39,22 @@ export function shouldAttemptSmtp() {
   const provider = getAuthEmailProvider();
   if (provider === 'smtp') return true;
   if (provider === 'supabase') return false;
-  if (isProductionDeploy()) return false;
+  if (isHostedBackend()) return false;
   return true;
 }
 
 export function shouldUseSupabaseAuthMailerFirst() {
-  return getAuthEmailProvider() === 'supabase';
+  const provider = getAuthEmailProvider();
+  if (provider === 'supabase') return true;
+  if (provider === 'auto' && isHostedBackend()) return true;
+  return false;
 }
 
 /** New reader signup via public signUp() so Supabase sends the confirmation email. */
 export function shouldRegisterViaPublicSupabaseSignUp() {
   const provider = getAuthEmailProvider();
   if (provider === 'supabase') return true;
-  if (provider === 'auto' && isProductionDeploy()) return true;
+  if (provider === 'auto' && isHostedBackend()) return true;
   return false;
 }
 
@@ -59,8 +72,8 @@ export function describeAuthEmailPolicy() {
   const provider = getAuthEmailProvider();
   if (provider === 'supabase') return 'supabase-only';
   if (provider === 'smtp') return 'smtp-only';
-  if (isProductionDeploy()) {
-    return 'auto(prod): brevo→resend→supabase, no SMTP';
+  if (isHostedBackend()) {
+    return 'auto(hosted): supabase-first, no SMTP';
   }
   return 'auto(local): smtp→brevo→resend→supabase';
 }

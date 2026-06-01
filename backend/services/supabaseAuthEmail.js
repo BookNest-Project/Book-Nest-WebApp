@@ -28,7 +28,29 @@ function mapSupabaseMailError(error, context = {}) {
 export async function sendVerificationViaSupabase(email, redirectTo) {
   const normalized = email.trim().toLowerCase();
 
-  // Magic link — most reliable for existing unverified users (admin.createUser)
+  logger.info('Sending verification via Supabase', { email: normalized, redirectTo });
+
+  // Signup resend — best after auth.signUp() or for unconfirmed accounts
+  const { error: resendError } = await supabase.auth.resend({
+    type: 'signup',
+    email: normalized,
+    options: { emailRedirectTo: redirectTo },
+  });
+
+  if (!resendError) {
+    logger.info('Verification email sent via Supabase (resend signup)', {
+      email: normalized,
+      redirectTo,
+    });
+    return { sent: true, via: 'supabase-resend' };
+  }
+
+  logger.warn('Supabase resend signup failed, trying magic link OTP', {
+    email: normalized,
+    error: resendError.message,
+    code: resendError.code,
+  });
+
   const { error: otpError } = await supabase.auth.signInWithOtp({
     email: normalized,
     options: {
@@ -45,33 +67,14 @@ export async function sendVerificationViaSupabase(email, redirectTo) {
     return { sent: true, via: 'supabase-otp' };
   }
 
-  logger.warn('Supabase magic link OTP failed, trying resend signup', {
-    email: normalized,
-    error: otpError.message,
-    code: otpError.code,
-  });
-
-  const { error: resendError } = await supabase.auth.resend({
-    type: 'signup',
-    email: normalized,
-    options: { emailRedirectTo: redirectTo },
-  });
-
-  if (!resendError) {
-    logger.info('Verification email sent via Supabase (resend signup)', {
-      email: normalized,
-      redirectTo,
-    });
-    return { sent: true, via: 'supabase-resend' };
-  }
-
   logger.error('Supabase verification email failed', {
     email: normalized,
     redirectTo,
-    otpError: otpError.message,
-    otpCode: otpError.code,
     resendError: resendError.message,
     resendCode: resendError.code,
+    otpError: otpError.message,
+    otpCode: otpError.code,
+    hint: `Add ${redirectTo} to Supabase Auth redirect URLs and set FRONTEND_URL on Railway`,
   });
 
   return {

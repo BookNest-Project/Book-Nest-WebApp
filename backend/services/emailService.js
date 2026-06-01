@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { logger } from '../utils/logger.js';
-import { shouldAttemptSmtp, getAuthEmailProvider } from './authEmailPolicy.js';
+import { shouldAttemptSmtp, getAuthEmailProvider, isHostedBackend } from './authEmailPolicy.js';
 
 let transporter = null;
 let resendClient = null;
@@ -34,6 +34,7 @@ export function getEmailTransportMode() {
   if (isBrevoConfigured()) return 'brevo';
   if (isResendConfigured()) return 'resend';
   if (shouldAttemptSmtp()) return 'smtp';
+  if (isHostedBackend()) return 'supabase';
   if (process.env.NODE_ENV !== 'production' || process.env.AUTH_RELAX_EMAIL_LIMITS === 'true') {
     return 'dev-log';
   }

@@ -24,6 +24,7 @@ export const authController = {
             email: result.email,
             resumed: !!result.resumed,
             verificationEmailPending: !!result.verificationEmailPending,
+            verificationEmailError: result.verificationEmailError || undefined,
           },
         });
       } catch (error) {
