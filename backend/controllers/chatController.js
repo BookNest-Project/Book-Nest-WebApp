@@ -85,6 +85,8 @@ export const chatController = {
       const { chatId } = req.params;
       const { content } = req.body;
       const postId = req.body.postId || req.body.post_id || null;
+      const replyToMessageId =
+        req.body.replyToMessageId || req.body.reply_to_message_id || null;
 
       if ((!content || !content.trim()) && !postId) {
         return res.status(400).json({ error: 'Content or postId is required' });
@@ -94,7 +96,8 @@ export const chatController = {
         chatId,
         req.user.id,
         content?.trim() || '',
-        postId
+        postId,
+        replyToMessageId
       );
 
       void notificationService

@@ -1,6 +1,7 @@
 import { wishlistRepository } from '../repositories/wishlistRepository.js';
 import { bookRepository } from '../repositories/bookRepository.js';
-import { ValidationError, NotFoundError } from '../utils/errors.js';
+import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
+import { userOwnsAnyFormatOfBook } from '../utils/purchaseValidation.js';
 import { logger } from '../utils/logger.js';
 
 export const wishlistService = {
@@ -16,6 +17,11 @@ export const wishlistService = {
     const { book, error: bookError } = await bookRepository.findById(bookId, userId);
     if (bookError || !book) {
       throw new NotFoundError('Book');
+    }
+
+    if (await userOwnsAnyFormatOfBook(userId, bookId)) {
+      await wishlistRepository.removeItem(userId, bookId);
+      throw new ConflictError('This book is already in your library');
     }
 
     const { item, error } = await wishlistRepository.addItem(userId, bookId);
@@ -62,8 +68,18 @@ export const wishlistService = {
     throw new Error(error);
   }
 
+  const filteredItems = [];
+  for (const item of items || []) {
+    const bookId = item.book_id || item.book?.id;
+    if (bookId && (await userOwnsAnyFormatOfBook(userId, bookId))) {
+      await wishlistRepository.removeItem(userId, bookId);
+      continue;
+    }
+    filteredItems.push(item);
+  }
+
   return {
-    items,
+    items: filteredItems,
     pagination: pagination || {
       page: validatedPage,
       limit: validatedLimit,

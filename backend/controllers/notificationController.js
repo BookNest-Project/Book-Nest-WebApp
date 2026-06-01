@@ -47,6 +47,27 @@ export const notificationController = {
     }
   },
 
+  async dismissByContext(req, res, next) {
+    try {
+      const { chatId, postId } = req.body || {};
+      if (!chatId && !postId) {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'chatId or postId is required' },
+        });
+      }
+
+      const result = await notificationRepository.dismissByContext(req.user.id, {
+        chatId: chatId ? String(chatId) : undefined,
+        postId: postId ? String(postId) : undefined,
+      });
+
+      res.status(200).json(formatSuccess(result, 'Notifications dismissed'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async subscribe(req, res, next) {
     try {
       const tz = Number.parseInt(req.body.timezone_offset_minutes, 10);

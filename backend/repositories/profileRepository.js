@@ -389,9 +389,15 @@ export const profileRepository = {
         postCount: 0,
         readingStats: undefined,
         achievements: undefined,
+        photos: [],
       };
 
       if (canViewDetails) {
+        try {
+          publicProfile.photos = await this.getProfilePhotos(user.id);
+        } catch {
+          publicProfile.photos = [];
+        }
         publicProfile.bio = user.bio;
         publicProfile.location = user.location;
         if (user.role === 'author' || user.role === 'publisher') {
@@ -488,5 +494,76 @@ export const profileRepository = {
     }
 
     return { deleted: true };
+  },
+
+  async getProfilePhotos(userId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_profile_photos')
+        .select('id, image_url, sort_order, created_at')
+        .eq('user_id', userId)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        if (/user_profile_photos/i.test(error.message) && /does not exist/i.test(error.message)) {
+          return [];
+        }
+        throw error;
+      }
+      return (data || []).map((row) => ({
+        id: row.id,
+        imageUrl: row.image_url,
+        sortOrder: row.sort_order,
+        createdAt: row.created_at,
+      }));
+    } catch (error) {
+      logger.warn('Profile photos unavailable', { userId, error: error.message });
+      return [];
+    }
+  },
+
+  async addProfilePhoto(userId, imageUrl) {
+    const { count } = await supabaseAdmin
+      .from('user_profile_photos')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const { data, error } = await supabaseAdmin
+      .from('user_profile_photos')
+      .insert({
+        user_id: userId,
+        image_url: imageUrl,
+        sort_order: count || 0,
+      })
+      .select('id, image_url, sort_order, created_at')
+      .single();
+
+    if (error) throw error;
+    return {
+      id: data.id,
+      imageUrl: data.image_url,
+      sortOrder: data.sort_order,
+      createdAt: data.created_at,
+    };
+  },
+
+  async deleteProfilePhoto(userId, photoId) {
+    const { data, error } = await supabaseAdmin
+      .from('user_profile_photos')
+      .select('id, image_url')
+      .eq('id', photoId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) throw error;
+
+    const { error: delError } = await supabaseAdmin
+      .from('user_profile_photos')
+      .delete()
+      .eq('id', photoId);
+
+    if (delError) throw delError;
+    return data;
   },
 };

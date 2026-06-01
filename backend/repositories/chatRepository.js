@@ -68,7 +68,7 @@ async function resolveUserDisplay(userRow) {
   };
 }
 
-function formatMessage(msg, display, sharedPost = null) {
+function formatMessage(msg, display, sharedPost = null, replyTo = null) {
   const deletedForEveryone = Boolean(msg.deleted_for_everyone_at);
   return {
     id: msg.id,
@@ -82,6 +82,7 @@ function formatMessage(msg, display, sharedPost = null) {
     isDeleted: deletedForEveryone,
     deletedForEveryone,
     editedAt: msg.edited_at ?? null,
+    replyTo: replyTo || null,
     createdAt: msg.created_at,
   };
 }
@@ -110,9 +111,74 @@ const MESSAGE_SELECT_WITH_EDIT = `
   users!sender_id ( id, email, avatar_url )
 `;
 
+const MESSAGE_SELECT_WITH_REPLY = `
+  id,
+  content,
+  sender_id,
+  post_id,
+  reply_to_message_id,
+  is_read,
+  deleted_for_everyone_at,
+  edited_at,
+  created_at,
+  users!sender_id ( id, email, avatar_url )
+`;
+
+async function fetchChatMessagesRows(chatId, from, to) {
+  let result = await supabaseAdmin
+    .from('messages')
+    .select(MESSAGE_SELECT_WITH_REPLY, { count: 'exact' })
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (result.error && isMissingReplyColumn(result.error)) {
+    result = await supabaseAdmin
+      .from('messages')
+      .select(MESSAGE_SELECT_WITH_EDIT, { count: 'exact' })
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: false })
+      .range(from, to);
+  }
+
+  if (result.error && isMissingEditedAtColumn(result.error)) {
+    result = await supabaseAdmin
+      .from('messages')
+      .select(MESSAGE_SELECT, { count: 'exact' })
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: false })
+      .range(from, to);
+  }
+
+  return result;
+}
+
 function isMissingEditedAtColumn(error) {
   const msg = error?.message || '';
   return /edited_at/i.test(msg) && /does not exist|column/i.test(msg);
+}
+
+function isMissingReplyColumn(error) {
+  const msg = error?.message || '';
+  return /reply_to_message_id/i.test(msg) && /does not exist|column/i.test(msg);
+}
+
+async function buildReplyPreview(replyRow, viewerUserId) {
+  if (!replyRow) return null;
+  const deleted = Boolean(replyRow.deleted_for_everyone_at);
+  const display = await resolveUserDisplay(replyRow.users);
+  const snippet = deleted
+    ? 'Message deleted'
+    : replyRow.post_id
+      ? 'Shared a post'
+      : (replyRow.content || '').slice(0, 200);
+  return {
+    id: replyRow.id,
+    senderId: replyRow.sender_id,
+    senderName: display.name,
+    content: snippet,
+    isDeleted: deleted,
+  };
 }
 
 async function attachSharedPosts(messages, viewerUserId) {
@@ -412,22 +478,7 @@ export const chatRepository = {
       const from = (page - 1) * limit;
       const to = from + limit - 1;
 
-      let messagesResult = await supabaseAdmin
-        .from('messages')
-        .select(MESSAGE_SELECT_WITH_EDIT, { count: 'exact' })
-        .eq('chat_id', chatId)
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (messagesResult.error && isMissingEditedAtColumn(messagesResult.error)) {
-        messagesResult = await supabaseAdmin
-          .from('messages')
-          .select(MESSAGE_SELECT, { count: 'exact' })
-          .eq('chat_id', chatId)
-          .order('created_at', { ascending: false })
-          .range(from, to);
-      }
-
+      const messagesResult = await fetchChatMessagesRows(chatId, from, to);
       if (messagesResult.error) throw messagesResult.error;
       const messages = messagesResult.data;
       const count = messagesResult.count;
@@ -447,13 +498,48 @@ export const chatRepository = {
 
       const postMap = await attachSharedPosts(messages, userId);
 
+      const replyIds = [
+        ...new Set(
+          (messages || []).map((m) => m.reply_to_message_id).filter(Boolean)
+        ),
+      ];
+      const replyMap = new Map();
+      if (replyIds.length > 0) {
+        let replyRows = await supabaseAdmin
+          .from('messages')
+          .select(MESSAGE_SELECT_WITH_REPLY)
+          .in('id', replyIds);
+        if (replyRows.error && isMissingReplyColumn(replyRows.error)) {
+          replyRows = await supabaseAdmin
+            .from('messages')
+            .select(MESSAGE_SELECT_WITH_EDIT)
+            .in('id', replyIds);
+        }
+        if (replyRows.error && isMissingEditedAtColumn(replyRows.error)) {
+          replyRows = await supabaseAdmin
+            .from('messages')
+            .select(MESSAGE_SELECT)
+            .in('id', replyIds);
+        }
+        if (!replyRows.error && replyRows.data) {
+          await Promise.all(
+            replyRows.data.map(async (row) => {
+              replyMap.set(row.id, await buildReplyPreview(row, userId));
+            })
+          );
+        }
+      }
+
       const formattedMessages = await Promise.all(
         (messages || [])
           .filter((msg) => !hiddenIds.has(msg.id))
           .map(async (msg) => {
             const display = await resolveUserDisplay(msg.users);
             const sharedPost = msg.post_id ? postMap.get(msg.post_id) || null : null;
-            return formatMessage(msg, display, sharedPost);
+            const replyTo = msg.reply_to_message_id
+              ? replyMap.get(msg.reply_to_message_id) || null
+              : null;
+            return formatMessage(msg, display, sharedPost, replyTo);
           })
       );
 
@@ -470,7 +556,7 @@ export const chatRepository = {
     }
   },
 
-  async sendMessage(chatId, userId, content, postId = null) {
+  async sendMessage(chatId, userId, content, postId = null, replyToMessageId = null) {
     try {
       await assertParticipant(chatId, userId);
 
@@ -483,26 +569,36 @@ export const chatRepository = {
         await feedRepository.getPostById(postId, userId);
       }
 
+      const baseInsert = {
+        chat_id: chatId,
+        sender_id: userId,
+        content: trimmed || 'Shared a post',
+        post_id: postId || null,
+      };
+
+      let insertPayload = { ...baseInsert };
+      if (replyToMessageId) {
+        insertPayload.reply_to_message_id = replyToMessageId;
+      }
+
       let insertResult = await supabaseAdmin
         .from('messages')
-        .insert({
-          chat_id: chatId,
-          sender_id: userId,
-          content: trimmed || 'Shared a post',
-          post_id: postId || null,
-        })
-        .select(MESSAGE_SELECT_WITH_EDIT)
+        .insert(insertPayload)
+        .select(MESSAGE_SELECT_WITH_REPLY)
         .single();
+
+      if (insertResult.error && isMissingReplyColumn(insertResult.error)) {
+        insertResult = await supabaseAdmin
+          .from('messages')
+          .insert(baseInsert)
+          .select(MESSAGE_SELECT_WITH_EDIT)
+          .single();
+      }
 
       if (insertResult.error && isMissingEditedAtColumn(insertResult.error)) {
         insertResult = await supabaseAdmin
           .from('messages')
-          .insert({
-            chat_id: chatId,
-            sender_id: userId,
-            content: trimmed || 'Shared a post',
-            post_id: postId || null,
-          })
+          .insert(baseInsert)
           .select(MESSAGE_SELECT)
           .single();
       }
@@ -540,7 +636,27 @@ export const chatRepository = {
         }
       }
 
-      return formatMessage(message, { ...display, name: 'You' }, sharedPost);
+      let replyTo = null;
+      if (message.reply_to_message_id) {
+        let replyQuery = await supabaseAdmin
+          .from('messages')
+          .select(MESSAGE_SELECT_WITH_REPLY)
+          .eq('id', message.reply_to_message_id)
+          .maybeSingle();
+        if (replyQuery.error && isMissingReplyColumn(replyQuery.error)) {
+          replyQuery = await supabaseAdmin
+            .from('messages')
+            .select(MESSAGE_SELECT_WITH_EDIT)
+            .eq('id', message.reply_to_message_id)
+            .maybeSingle();
+        }
+        const { data: replyRow } = replyQuery;
+        if (replyRow) {
+          replyTo = await buildReplyPreview(replyRow, userId);
+        }
+      }
+
+      return formatMessage(message, { ...display, name: 'You' }, sharedPost, replyTo);
     } catch (error) {
       logger.error('Send message error', { error: error.message });
       throw error;
@@ -716,7 +832,7 @@ export const chatRepository = {
     try {
       const { data: chat, error: chatError } = await supabaseAdmin
         .from('chats')
-        .select('type')
+        .select('type, created_by')
         .eq('id', chatId)
         .single();
 
@@ -724,6 +840,10 @@ export const chatRepository = {
       if (chat.type !== 'group') throw new Error('Not a group chat');
 
       await assertParticipant(chatId, userId);
+
+      if (chat.created_by !== userId) {
+        throw new Error('Only the group admin can add members');
+      }
 
       const { error: insertError } = await supabaseAdmin
         .from('chat_participants')

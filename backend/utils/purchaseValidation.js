@@ -1,5 +1,20 @@
 import { supabaseAdmin } from '../config/supabase.js';
 
+export async function userOwnsAnyFormatOfBook(userId, bookId) {
+  if (!userId || !bookId) return false;
+
+  const { data: formats, error: formatsError } = await supabaseAdmin
+    .from('book_formats')
+    .select('id')
+    .eq('book_id', bookId);
+
+  if (formatsError || !formats?.length) return false;
+
+  const formatIds = formats.map((f) => f.id);
+  const owned = await getOwnedFormatIds(userId, formatIds);
+  return owned.size > 0;
+}
+
 export async function getOwnedFormatIds(userId, formatIds) {
   if (!formatIds.length) return new Set();
 

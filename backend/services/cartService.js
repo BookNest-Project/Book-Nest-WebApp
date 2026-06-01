@@ -1,13 +1,33 @@
 import { cartRepository } from '../repositories/cartRepository.js';
 import { ValidationError, ConflictError, ForbiddenError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { assertCanPurchaseFormats } from '../utils/purchaseValidation.js';
+import { assertCanPurchaseFormats, getOwnedFormatIds } from '../utils/purchaseValidation.js';
 
 export const cartService = {
   async getCart(userId) {
     if (!userId) throw new ValidationError('User ID is required');
     const { cart, error } = await cartRepository.getOrCreateCart(userId);
     if (error) throw new Error(error);
+
+    const items = cart?.items || [];
+    if (!items.length) return cart;
+
+    const formatIds = items.map((item) => item.book_format_id).filter(Boolean);
+    const owned = await getOwnedFormatIds(userId, formatIds);
+    if (!owned.size) return cart;
+
+    const toRemove = items.filter((item) => owned.has(item.book_format_id));
+    for (const item of toRemove) {
+      await cartRepository.removeItem(item.id);
+    }
+
+    if (toRemove.length) {
+      logger.info('Removed owned formats from cart', { userId, count: toRemove.length });
+      const refreshed = await cartRepository.getOrCreateCart(userId);
+      if (refreshed.error) throw new Error(refreshed.error);
+      return refreshed.cart;
+    }
+
     return cart;
   },
 

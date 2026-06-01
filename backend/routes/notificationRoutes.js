@@ -9,6 +9,7 @@ router.use(authenticate);
 router.get('/', notificationController.list);
 router.get('/unread-count', notificationController.getUnreadCount);
 router.patch('/read-all', notificationController.markAllAsRead);
+router.post('/dismiss-context', notificationController.dismissByContext);
 router.patch('/:id/read', notificationController.markAsRead);
 router.post('/subscribe', notificationController.subscribe);
 router.post('/unsubscribe', notificationController.unsubscribe);

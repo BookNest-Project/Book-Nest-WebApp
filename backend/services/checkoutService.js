@@ -3,6 +3,7 @@ import { cartService } from './cartService.js';
 import { chapaService } from './chapaService.js';
 import { sellerFinanceService } from './sellerFinanceService.js';
 import { incrementBookSale } from './bookSalesService.js';
+import { wishlistRepository } from '../repositories/wishlistRepository.js';
 import { logger } from '../utils/logger.js';
 import { assertCanPurchaseFormats } from '../utils/purchaseValidation.js';
 
@@ -296,6 +297,18 @@ export const checkoutService = {
       if (bookFormat?.book_id) {
         const lineAmount = amountByFormat.get(bookFormatId) ?? transaction.amount;
         await incrementBookSale(bookFormat.book_id, lineAmount);
+
+        const { error: wishlistError } = await wishlistRepository.removeItem(
+          transaction.user_id,
+          bookFormat.book_id
+        );
+        if (wishlistError) {
+          logger.warn('Wishlist cleanup after purchase failed', {
+            userId: transaction.user_id,
+            bookId: bookFormat.book_id,
+            error: wishlistError,
+          });
+        }
       }
 
       const lineAmount = amountByFormat.get(bookFormatId) ?? transaction.amount;

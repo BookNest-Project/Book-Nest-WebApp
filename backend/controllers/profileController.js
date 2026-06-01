@@ -85,6 +85,47 @@ export const profileController = {
     }
   },
 
+  async getProfilePhotos(req, res, next) {
+    try {
+      const photos = await profileRepository.getProfilePhotos(req.user.id);
+      res.status(200).json(formatSuccess(photos, 'Profile photos retrieved'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async addProfilePhoto(req, res, next) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+      const { url } = await fileUploadService.uploadProfilePhoto(req.file, req.user.id);
+      const photo = await profileRepository.addProfilePhoto(req.user.id, url);
+      res.status(201).json(formatSuccess(photo, 'Photo added'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async deleteProfilePhoto(req, res, next) {
+    try {
+      const { photoId } = req.params;
+      const row = await profileRepository.deleteProfilePhoto(req.user.id, photoId);
+      try {
+        const marker = '/booknest/';
+        const idx = row.image_url.indexOf(marker);
+        if (idx >= 0) {
+          await fileUploadService.deleteFile(row.image_url.slice(idx + marker.length));
+        }
+      } catch {
+        /* ignore storage cleanup */
+      }
+      res.status(200).json(formatSuccess(null, 'Photo deleted'));
+    } catch (error) {
+      next(error);
+    }
+  },
+
  async getPublicProfile(req, res, next) {
   try {
     const { username } = req.params;

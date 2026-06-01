@@ -56,7 +56,7 @@ export const checkoutController = {
 
       const result = await checkoutService.verifyAndFulfillPayment(
         String(tx_ref),
-        req.user.id
+        req.user?.id ?? null
       );
 
       res.status(200).json({

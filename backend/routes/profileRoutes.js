@@ -11,6 +11,9 @@ router.use(authenticate);
 router.get('/', profileController.getProfile);
 router.put('/', profileController.updateProfile);
 router.post('/avatar', upload.single('avatar'), profileController.updateAvatar);
+router.get('/photos', profileController.getProfilePhotos);
+router.post('/photos', upload.single('photo'), profileController.addProfilePhoto);
+router.delete('/photos/:photoId', profileController.deleteProfilePhoto);
 router.put('/settings', profileController.updateSettings);
 router.delete('/account', profileController.deleteAccount);
 

@@ -139,4 +139,41 @@ export const notificationRepository = {
     if (error) throw error;
     return { success: true };
   },
+
+  /**
+   * Remove unread notifications for a chat or post the user has opened.
+   */
+  async dismissByContext(userId, { chatId, postId } = {}) {
+    if (!chatId && !postId) {
+      return { dismissed: 0 };
+    }
+
+    let query = supabaseAdmin
+      .from('user_notifications')
+      .delete()
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (chatId) {
+      query = query.eq('type', 'message').contains('metadata', { chatId });
+    }
+
+    if (postId) {
+      query = query.eq('type', 'post').contains('metadata', { postId });
+    }
+
+    const { data, error } = await query.select('id');
+
+    if (error) {
+      logger.error('Dismiss notifications by context failed', {
+        userId,
+        chatId,
+        postId,
+        error: error.message,
+      });
+      throw error;
+    }
+
+    return { dismissed: data?.length ?? 0 };
+  },
 };

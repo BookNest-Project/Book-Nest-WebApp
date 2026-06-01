@@ -161,7 +161,7 @@ export const notificationService = {
     if (error || !followers?.length) return { sent: 0, notified: 0 };
 
     const body = `${authorName} shared a new post on BookNest.`;
-    const postUrl = '/community';
+    const postUrl = postId ? `/community?post=${postId}` : '/community';
 
     let sent = 0;
     let notified = 0;
