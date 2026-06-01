@@ -1,5 +1,6 @@
 import express from 'express';
 import { bookController } from '../controllers/bookController.js';
+import { authorStudioController } from '../controllers/authorStudioController.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -18,6 +19,7 @@ router.use(authenticate);
 // ⚠️ IMPORTANT: Specific routes MUST come before parameter routes
 router.get('/my-books', bookController.getMyBooks);  // ✅ BEFORE /:id
 router.get('/submission-timeline', bookController.getSubmissionTimeline);
+router.get('/:id/submission', authorStudioController.getBookSubmission);
 router.patch('/:id/submit-for-review', bookController.submitForReview);
 
 // Parameter route (catch-all) - MUST be LAST

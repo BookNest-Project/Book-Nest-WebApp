@@ -75,4 +75,21 @@ export const adminDashboardRepository = {
     if (error) return 0;
     return count ?? 0;
   },
+
+  /** User registrations since a date (for growth charts and comparisons). */
+  async userSignupsSince(sinceIso) {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('created_at, role')
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: true })
+      .limit(10000);
+
+    if (error) return [];
+
+    return (data ?? []).map((row) => ({
+      created_at: row.created_at,
+      role: row.role || 'reader',
+    }));
+  },
 };

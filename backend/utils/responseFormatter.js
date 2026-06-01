@@ -43,15 +43,15 @@ export const formatSessionUser = (user, profile = null, authMeta = null) => {
       bio,
     };
   } else if (profile) {
-    if (user.role === 'reader' && profile.display_name) {
-      publicName = profile.display_name;
-      avatarUrl = profile.avatar_url;
-    } else if (user.role === 'author' && profile.pen_name) {
-      publicName = profile.pen_name;
-      avatarUrl = profile.avatar_url;
-    } else if (user.role === 'publisher' && profile.company_name) {
-      publicName = profile.company_name;
-      avatarUrl = profile.avatar_url;
+    if (user.role === 'reader') {
+      if (profile.display_name) publicName = profile.display_name;
+      avatarUrl = profile.avatar_url || null;
+    } else if (user.role === 'author') {
+      if (profile.pen_name) publicName = profile.pen_name;
+      avatarUrl = profile.avatar_url || null;
+    } else if (user.role === 'publisher') {
+      if (profile.company_name) publicName = profile.company_name;
+      avatarUrl = profile.avatar_url || null;
     }
   }
 

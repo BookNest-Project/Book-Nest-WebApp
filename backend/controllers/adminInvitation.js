@@ -92,7 +92,7 @@ export const resendInvitation = async (req, res, next) => {
 
 export const deleteInvitation = async (req, res, next) => {
   try {
-    const data = await adminInvitationService.deleteInvitation(req.params.id);
+    const data = await adminInvitationService.deleteInvitation(req.params.id, req.user?.id);
     res.status(200).json(formatSuccess(data, 'Invitation deleted'));
   } catch (error) {
     next(error);

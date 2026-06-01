@@ -17,6 +17,23 @@ export const userRepository = {
     return user;
   },
 
+  async findByEmail(email) {
+    const normalized = (email || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role, account_status, created_at, updated_at')
+      .eq('email', normalized)
+      .maybeSingle();
+
+    if (error) {
+      logger.error('User findByEmail error', { email: normalized, error: error.message });
+      return null;
+    }
+    return user;
+  },
+
   async findReaderProfile(userId) {
     const { data: profile, error } = await supabaseAdmin
       .from('reader_profiles')
@@ -111,7 +128,11 @@ export const userRepository = {
 
   async verifyCredentials(email, password) {
     const { supabase } = await import('../config/supabase.js');
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
     
     if (error) {
       return { user: null, session: null, error };
@@ -130,6 +151,143 @@ export const userRepository = {
       logger.error('Update reader profile error', { userId, updates, error: error.message });
       return false;
     }
+    return true;
+  },
+
+  async upsertProfileAvatar(userId, role, avatarUrl, email) {
+    const defaultName =
+      (email || '').split('@')[0].replace(/[._-]+/g, ' ').trim().slice(0, 80) || 'BookNest User';
+    const safeName = defaultName.length >= 2 ? defaultName : 'BookNest User';
+    const now = new Date().toISOString();
+
+    if (role === 'reader') {
+      const existing = await this.findReaderProfile(userId);
+      const { error } = await supabaseAdmin.from('reader_profiles').upsert(
+        {
+          user_id: userId,
+          display_name: existing?.display_name || safeName,
+          avatar_url: avatarUrl,
+          updated_at: now,
+        },
+        { onConflict: 'user_id' },
+      );
+      if (error) throw error;
+      return true;
+    }
+
+    if (role === 'author') {
+      const existing = await this.findAuthorProfile(userId);
+      const penName = existing?.pen_name || safeName;
+      const { error } = await supabaseAdmin.from('author_profiles').upsert(
+        {
+          user_id: userId,
+          pen_name: penName,
+          full_name: existing?.full_name || penName,
+          avatar_url: avatarUrl,
+          updated_at: now,
+        },
+        { onConflict: 'user_id' },
+      );
+      if (error) throw error;
+      return true;
+    }
+
+    if (role === 'publisher') {
+      const existing = await this.findPublisherProfile(userId);
+      const { error } = await supabaseAdmin.from('publisher_profiles').upsert(
+        {
+          user_id: userId,
+          company_name: existing?.company_name || safeName,
+          avatar_url: avatarUrl,
+          updated_at: now,
+        },
+        { onConflict: 'user_id' },
+      );
+      if (error) throw error;
+      return true;
+    }
+
+    return false;
+  },
+
+  async updateAuthorProfile(userId, updates) {
+    const { error } = await supabaseAdmin
+      .from('author_profiles')
+      .update(updates)
+      .eq('user_id', userId);
+
+    if (error) {
+      logger.error('Update author profile error', { userId, updates, error: error.message });
+      return false;
+    }
+    return true;
+  },
+
+  async updatePublisherProfile(userId, updates) {
+    const { error } = await supabaseAdmin
+      .from('publisher_profiles')
+      .update(updates)
+      .eq('user_id', userId);
+
+    if (error) {
+      logger.error('Update publisher profile error', { userId, updates, error: error.message });
+      return false;
+    }
+    return true;
+  },
+
+  async upsertReaderProfile(userId, updates, email) {
+    const existing = await this.findReaderProfile(userId);
+    const defaultName =
+      (email || '').split('@')[0].replace(/[._-]+/g, ' ').trim().slice(0, 80) || 'BookNest User';
+    const safeName = defaultName.length >= 2 ? defaultName : 'BookNest User';
+    const row = {
+      user_id: userId,
+      display_name: updates.display_name ?? existing?.display_name ?? safeName,
+      avatar_url: updates.avatar_url ?? existing?.avatar_url ?? null,
+      bio: updates.bio !== undefined ? updates.bio : existing?.bio ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseAdmin.from('reader_profiles').upsert(row, { onConflict: 'user_id' });
+    if (error) throw error;
+    return true;
+  },
+
+  async upsertAuthorProfile(userId, updates, email) {
+    const existing = await this.findAuthorProfile(userId);
+    const defaultName =
+      (email || '').split('@')[0].replace(/[._-]+/g, ' ').trim().slice(0, 120) || 'BookNest Author';
+    const safeName = defaultName.length >= 2 ? defaultName : 'BookNest Author';
+    const penName = updates.pen_name ?? existing?.pen_name ?? safeName;
+    const row = {
+      user_id: userId,
+      pen_name: penName,
+      full_name: updates.full_name ?? existing?.full_name ?? penName,
+      avatar_url: existing?.avatar_url ?? null,
+      bio: updates.bio !== undefined ? updates.bio : existing?.bio ?? null,
+      website_url: updates.website_url !== undefined ? updates.website_url : existing?.website_url ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseAdmin.from('author_profiles').upsert(row, { onConflict: 'user_id' });
+    if (error) throw error;
+    return true;
+  },
+
+  async upsertPublisherProfile(userId, updates, email) {
+    const existing = await this.findPublisherProfile(userId);
+    const defaultName =
+      (email || '').split('@')[0].replace(/[._-]+/g, ' ').trim().slice(0, 160) || 'BookNest Publisher';
+    const safeName = defaultName.length >= 2 ? defaultName : 'BookNest Publisher';
+    const row = {
+      user_id: userId,
+      company_name: updates.company_name ?? existing?.company_name ?? safeName,
+      avatar_url: existing?.avatar_url ?? null,
+      bio: updates.bio !== undefined ? updates.bio : existing?.bio ?? null,
+      website_url: updates.website_url !== undefined ? updates.website_url : existing?.website_url ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabaseAdmin.from('publisher_profiles').upsert(row, { onConflict: 'user_id' });
+    if (error) throw error;
     return true;
   },
 

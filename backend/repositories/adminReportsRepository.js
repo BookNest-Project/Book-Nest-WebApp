@@ -97,6 +97,21 @@ export const adminReportsRepository = {
     return data ?? [];
   },
 
+  async countTransactionsByStatus(statuses, sinceIso) {
+    if (!Array.isArray(statuses) || !statuses.length) return 0;
+    try {
+      const { count, error } = await supabaseAdmin
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .in('status', statuses)
+        .gte('created_at', sinceIso);
+      if (error) return 0;
+      return count ?? 0;
+    } catch {
+      return 0;
+    }
+  },
+
   async revenueByDay(days = 30) {
     const since = new Date();
     since.setDate(since.getDate() - days);

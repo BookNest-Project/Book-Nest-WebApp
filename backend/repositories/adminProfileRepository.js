@@ -83,6 +83,27 @@ export const adminProfileRepository = {
     return data;
   },
 
+  async upsertProfile(userId, { displayName, bio }) {
+    const existing = await this.findByUserId(userId);
+    const safeName = safeDisplayName(displayName, existing?.display_name);
+    const row = {
+      user_id: userId,
+      display_name: safeName,
+      updated_at: new Date().toISOString(),
+    };
+    if (bio !== undefined) row.bio = bio;
+    if (existing?.avatar_url) row.avatar_url = existing.avatar_url;
+
+    const { data, error } = await supabaseAdmin
+      .from('admin_profiles')
+      .upsert(row, { onConflict: 'user_id' })
+      .select('user_id, display_name, avatar_url, bio, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
   async upsertAvatar(userId, { avatarUrl, displayName }) {
     const existing = await this.findByUserId(userId);
 

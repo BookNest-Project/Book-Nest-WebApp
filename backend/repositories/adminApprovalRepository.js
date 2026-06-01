@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
-import { buildBookSnapshot } from '../utils/bookSnapshot.js';
+import { buildBookSnapshot, formatsToSnapshot } from '../utils/bookSnapshot.js';
+import { bookReviewWorkflowRepository } from './bookReviewWorkflowRepository.js';
 
 export const BOOK_SELECT = `
   id,
@@ -24,6 +25,8 @@ export const BOOK_SELECT = `
   review_note,
   review_metadata,
   submission_previous,
+  version_number,
+  review_state,
   created_at,
   updated_at
 `;
@@ -62,7 +65,9 @@ function stripMissingColumnError(error) {
   if (
     error?.message?.includes('review_note') ||
     error?.message?.includes('review_metadata') ||
-    error?.message?.includes('submission_previous')
+    error?.message?.includes('submission_previous') ||
+    error?.message?.includes('version_number') ||
+    error?.message?.includes('review_state')
   ) {
     useExtendedColumns = false;
     return true;
@@ -385,22 +390,94 @@ export const adminApprovalRepository = {
   async findFormatsByBookId(bookId) {
     const { data, error } = await supabaseAdmin
       .from('book_formats')
-      .select('id, format_type, price, currency')
+      .select(
+        'id, format_type, price, currency, storage_path, file_url, mime_type, file_size_bytes, page_count, duration_sec, created_at, updated_at',
+      )
       .eq('book_id', bookId);
 
     if (error) return [];
     return data ?? [];
   },
 
+  async applyBookFieldsFromSnapshot(bookId, snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const updates = {};
+    const scalarFields = [
+      'title',
+      'subtitle',
+      'description',
+      'isbn',
+      'author_name',
+      'publisher_name',
+      'language',
+      'publication_date',
+      'cover_image_url',
+      'cover_image_path',
+    ];
+    for (const field of scalarFields) {
+      if (snapshot[field] !== undefined && snapshot[field] !== null && snapshot[field] !== '') {
+        updates[field] = snapshot[field];
+      }
+    }
+    if (snapshot.genre_id) {
+      updates.genre_id = snapshot.genre_id;
+    }
+    if (Object.keys(updates).length === 0) return;
+
+    const { error } = await supabaseAdmin.from('books').update(updates).eq('id', bookId);
+    if (error) {
+      logger.warn('applyBookFieldsFromSnapshot', { bookId, error: error.message });
+      throw error;
+    }
+  },
+
+  async applyFormatPricesFromSnapshot(bookId, formatsSnapshot) {
+    if (!Array.isArray(formatsSnapshot) || formatsSnapshot.length === 0) return;
+    const existing = await this.findFormatsByBookId(bookId);
+    for (const proposed of formatsSnapshot) {
+      const formatType = proposed.format_type || proposed.formatType;
+      if (!formatType) continue;
+      const row = existing.find((f) => f.format_type === formatType);
+      if (!row?.id) continue;
+      const price = proposed.price != null ? Number(proposed.price) : row.price;
+      const currency = proposed.currency || row.currency || 'ETB';
+      const { error } = await supabaseAdmin
+        .from('book_formats')
+        .update({ price, currency })
+        .eq('id', row.id);
+      if (error) {
+        logger.warn('applyFormatPricesFromSnapshot', { bookId, formatType, error: error.message });
+      }
+    }
+  },
+
   async logActivity(bookId, adminId, action, details = null) {
+    const { recordAdminTask } = await import('../utils/adminTaskLogger.js');
+    const { formatTaskDescription } = await import('../utils/adminTaskDescriptions.js');
+
+    const description = formatTaskDescription(action, details);
+    const enrichedDetails =
+      details && typeof details === 'object'
+        ? { ...details, description }
+        : { description };
+
     const { error } = await supabaseAdmin.from('book_review_activity').insert({
       book_id: bookId,
       admin_id: adminId,
       action,
-      details,
+      details: enrichedDetails,
     });
     if (error) {
       logger.warn('logActivity skipped', { bookId, error: error.message });
+    } else {
+      await recordAdminTask({
+        adminId,
+        category: 'books',
+        action,
+        bookId,
+        details: enrichedDetails,
+        description,
+      });
     }
   },
 
@@ -589,7 +666,9 @@ export const adminApprovalRepository = {
       return { book: null, error: 'Not authorized to submit this book' };
     }
 
-    if (!['draft', 'rejected'].includes(existing.status)) {
+    const isApprovedResubmit = existing.status === 'approved';
+
+    if (!['draft', 'rejected', 'approved'].includes(existing.status)) {
       return {
         book: null,
         error: `Cannot submit book with status "${existing.status}"`,
@@ -600,17 +679,44 @@ export const adminApprovalRepository = {
     const genres = await this.findGenresByIds([existing.genre_id].filter(Boolean));
     const genreName = genres[0]?.name ?? null;
 
+    const formats = await this.findFormatsByBookId(id);
+    const proposedSnapshot = buildBookSnapshot(existing, genreName, formats);
+    const proposedFormats = formatsToSnapshot(formats);
+
     if (approvedSnapshot) {
       await this.setSubmissionPrevious(id, approvedSnapshot);
     } else if (existing.reviewed_by_admin_id) {
-      await this.setSubmissionPrevious(id, buildBookSnapshot(existing, genreName));
+      await this.setSubmissionPrevious(id, proposedSnapshot);
+    }
+
+    const previousSnapshot =
+      approvedSnapshot ||
+      (existing.reviewed_by_admin_id ? proposedSnapshot : null);
+    const previousFormats =
+      approvedSnapshot?.formats || (isApprovedResubmit ? proposedFormats : null);
+
+    if (isApprovedResubmit || approvedSnapshot) {
+      await bookReviewWorkflowRepository.createUpdateRequest({
+        book_id: id,
+        status: 'pending_review',
+        proposed_snapshot: proposedSnapshot,
+        previous_snapshot: previousSnapshot,
+        proposed_formats: proposedFormats,
+        previous_formats: previousFormats,
+        update_note: (updateNote || '').trim() || null,
+        submitted_by: userId,
+      });
     }
 
     const note = (updateNote || '').trim();
     const submissionMeta = {
+      title: existing.title,
       updateNote: note || null,
       submittedAt: new Date().toISOString(),
-      submissionKind: approvedSnapshot || existing.reviewed_by_admin_id ? 'metadata_update' : 'new_entry',
+      submissionKind:
+        isApprovedResubmit || approvedSnapshot || existing.reviewed_by_admin_id
+          ? 'metadata_update'
+          : 'new_entry',
     };
 
     const updates = { status: 'pending_review' };

@@ -26,8 +26,8 @@ export const uploadAdminAvatar = async (req, res, next) => {
 
 export const updateAdminProfile = async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const rawName = body.displayName ?? body.display_name;
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const rawName = body.displayName ?? body.display_name ?? body.name;
     const rawBio = body.bio;
 
     const hasName = rawName !== undefined && rawName !== null && String(rawName).trim() !== '';
@@ -38,7 +38,7 @@ export const updateAdminProfile = async (req, res, next) => {
     }
 
     const session = await adminProfileService.updateProfile(req.user.id, {
-      displayName: hasName ? rawName : undefined,
+      displayName: hasName ? String(rawName).trim() : undefined,
       bio: hasBio ? rawBio : undefined,
     });
     res.status(200).json(formatSuccess(session, 'Profile updated successfully'));

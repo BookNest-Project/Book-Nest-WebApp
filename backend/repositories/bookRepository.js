@@ -53,6 +53,8 @@ async createBook(bookData, formats, userId, userRole) {
       price: format.price,
       currency: format.currency || 'ETB',
       storage_path: format.storage_path,
+      file_url: format.file_url || null,
+      mime_type: format.mime_type || null,
       file_size_bytes: format.file_size_bytes,
       page_count: format.page_count || null,
       duration_sec: format.duration_sec || null,

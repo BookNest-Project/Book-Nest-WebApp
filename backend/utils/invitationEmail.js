@@ -22,7 +22,7 @@ export function buildInvitationAcceptUrl(token) {
     process.env.INVITE_ACCEPT_URL ||
     process.env.ADMIN_APP_URL ||
     process.env.FRONTEND_URL ||
-    'http://localhost:3000';
+    'http://localhost:3001';
   return `${base.replace(/\/+$/, '')}/invite/accept/${token}`;
 }
 

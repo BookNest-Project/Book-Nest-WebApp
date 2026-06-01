@@ -15,6 +15,48 @@ const USER_COLUMNS_EXTENDED = `
   status_updated_at
 `;
 
+async function findUserIdsBySearch(search) {
+  const term = search?.trim();
+  if (!term) return null;
+
+  const pattern = `%${term}%`;
+  const ids = new Set();
+
+  function addRows(rows, idKey = 'id') {
+    for (const row of rows ?? []) {
+      const id = row[idKey];
+      if (id) ids.add(id);
+    }
+  }
+
+  const queries = [
+    supabaseAdmin.from('users').select('id').ilike('email', pattern),
+    supabaseAdmin.from('reader_profiles').select('user_id').ilike('display_name', pattern),
+    supabaseAdmin.from('author_profiles').select('user_id').ilike('pen_name', pattern),
+    supabaseAdmin.from('author_profiles').select('user_id').ilike('full_name', pattern),
+    supabaseAdmin.from('publisher_profiles').select('user_id').ilike('company_name', pattern),
+    supabaseAdmin.from('admin_profiles').select('user_id').ilike('display_name', pattern),
+  ];
+
+  const results = await Promise.all(
+    queries.map(async (query) => {
+      try {
+        return await query;
+      } catch {
+        return { data: null, error: null };
+      }
+    }),
+  );
+
+  for (const { data, error } of results) {
+    if (error) continue;
+    if (data?.[0]?.user_id !== undefined) addRows(data, 'user_id');
+    else addRows(data, 'id');
+  }
+
+  return [...ids];
+}
+
 export const adminUserRepository = {
   async countAll() {
     const { count, error } = await supabaseAdmin
@@ -87,9 +129,11 @@ export const adminUserRepository = {
     if (role) query = query.eq('role', role);
     if (statuses?.length) query = query.in('account_status', statuses);
     else if (status) query = query.eq('account_status', status);
-    if (search?.trim()) {
-      const term = `%${search.trim()}%`;
-      query = query.ilike('email', term);
+
+    const searchIds = search?.trim() ? await findUserIdsBySearch(search) : null;
+    if (searchIds) {
+      if (!searchIds.length) return { users: [], total: 0 };
+      query = query.in('id', searchIds);
     }
 
     let { data, error, count } = await query.range(from, to);
@@ -103,9 +147,7 @@ export const adminUserRepository = {
       if (role) fallbackQuery = fallbackQuery.eq('role', role);
       if (statuses?.length) fallbackQuery = fallbackQuery.in('account_status', statuses);
       else if (status) fallbackQuery = fallbackQuery.eq('account_status', status);
-      if (search?.trim()) {
-        fallbackQuery = fallbackQuery.ilike('email', `%${search.trim()}%`);
-      }
+      if (searchIds) fallbackQuery = fallbackQuery.in('id', searchIds);
 
       ({ data, error, count } = await fallbackQuery.range(from, to));
     }
@@ -127,8 +169,11 @@ export const adminUserRepository = {
       .order('updated_at', { ascending: false });
 
     if (role) query = query.eq('role', role);
-    if (search?.trim()) {
-      query = query.ilike('email', `%${search.trim()}%`);
+
+    const searchIds = search?.trim() ? await findUserIdsBySearch(search) : null;
+    if (searchIds) {
+      if (!searchIds.length) return { users: [], total: 0 };
+      query = query.in('id', searchIds);
     }
 
     let { data, error, count } = await query.range(from, to);
@@ -141,9 +186,7 @@ export const adminUserRepository = {
         .order('updated_at', { ascending: false });
 
       if (role) fallbackQuery = fallbackQuery.eq('role', role);
-      if (search?.trim()) {
-        fallbackQuery = fallbackQuery.ilike('email', `%${search.trim()}%`);
-      }
+      if (searchIds) fallbackQuery = fallbackQuery.in('id', searchIds);
 
       ({ data, error, count } = await fallbackQuery.range(from, to));
     }
@@ -166,7 +209,11 @@ export const adminUserRepository = {
       .limit(max);
 
     if (role) query = query.eq('role', role);
-    if (search?.trim()) query = query.ilike('email', `%${search.trim()}%`);
+    if (search?.trim()) {
+      const searchIds = await findUserIdsBySearch(search);
+      if (!searchIds.length) return [];
+      query = query.in('id', searchIds);
+    }
 
     const { data, error } = await query;
     if (error) throw error;
@@ -182,9 +229,11 @@ export const adminUserRepository = {
 
     if (role) query = query.eq('role', role);
     if (status) query = query.eq('account_status', status);
-    if (search?.trim()) {
-      const term = `%${search.trim()}%`;
-      query = query.ilike('email', term);
+
+    const searchIds = search?.trim() ? await findUserIdsBySearch(search) : null;
+    if (searchIds) {
+      if (!searchIds.length) return [];
+      query = query.in('id', searchIds);
     }
 
     const { data, error } = await query;

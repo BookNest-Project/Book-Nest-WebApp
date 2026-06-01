@@ -1,0 +1,77 @@
+{
+  "a7b575a6-807d-42a7-a518-a27880d1611d": {
+    "checklist": {
+      "noCopyrightViolations": true,
+      "noPlagiarism": true,
+      "audioQualityAcceptable": true,
+      "pdfFormattingAcceptable": true,
+      "metadataAccurate": true,
+      "pricingReasonable": true,
+      "revenueAgreementSigned": true
+    },
+    "pdfReview": {
+      "status": "approved",
+      "comment": null,
+      "reviewedAt": "2026-06-01T07:22:29.127Z",
+      "reviewedBy": "c5ea3253-14a9-473f-bcd6-87c942d5d340"
+    },
+    "audioReview": {
+      "status": "approved",
+      "comment": null,
+      "reviewedAt": "2026-06-01T07:22:31.225Z",
+      "reviewedBy": "c5ea3253-14a9-473f-bcd6-87c942d5d340"
+    },
+    "changeDecisions": {
+      "title": "approved",
+      "cover_image_url": "rejected"
+    }
+  },
+  "694f2c65-03ab-45bc-805a-e0542c6fcf59": {
+    "checklist": {
+      "noCopyrightViolations": false,
+      "noPlagiarism": false,
+      "audioQualityAcceptable": false,
+      "pdfFormattingAcceptable": false,
+      "metadataAccurate": false,
+      "pricingReasonable": false,
+      "revenueAgreementSigned": false
+    },
+    "pdfReview": {
+      "status": "approved",
+      "comment": null,
+      "reviewedAt": "2026-06-01T06:44:06.196Z",
+      "reviewedBy": "c5ea3253-14a9-473f-bcd6-87c942d5d340"
+    },
+    "audioReview": {
+      "status": "pending",
+      "comment": null,
+      "reviewedAt": null,
+      "reviewedBy": null
+    },
+    "changeDecisions": {}
+  },
+  "150e62e2-f015-47aa-8e4b-a00e504c2b5e": {
+    "checklist": {
+      "noCopyrightViolations": true,
+      "noPlagiarism": true,
+      "audioQualityAcceptable": true,
+      "pdfFormattingAcceptable": true,
+      "metadataAccurate": true,
+      "pricingReasonable": true,
+      "revenueAgreementSigned": true
+    },
+    "pdfReview": {
+      "status": "pending",
+      "comment": null,
+      "reviewedAt": null,
+      "reviewedBy": null
+    },
+    "audioReview": {
+      "status": "pending",
+      "comment": null,
+      "reviewedAt": null,
+      "reviewedBy": null
+    },
+    "changeDecisions": {}
+  }
+}

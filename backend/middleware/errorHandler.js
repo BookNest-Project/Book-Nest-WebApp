@@ -1,7 +1,10 @@
 import { formatError } from '../utils/responseFormatter.js';
 import { logger } from '../utils/logger.js';
+import { adminErrorLogsService } from '../services/adminErrorLogsService.js';
 
 export const errorHandler = (err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+
   logger.error('Request error', {
     path: req.path,
     method: req.method,
@@ -9,7 +12,8 @@ export const errorHandler = (err, req, res, next) => {
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 
-  const statusCode = err.statusCode || 500;
+  void adminErrorLogsService.recordFromRequest(err, req, statusCode).catch(() => {});
+
   const response = formatError(err, statusCode);
 
   res.status(statusCode).json(response);

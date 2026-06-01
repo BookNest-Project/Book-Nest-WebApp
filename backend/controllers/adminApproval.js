@@ -8,6 +8,7 @@ import { adminNotificationService } from '../services/adminNotificationService.j
 import { validateLogin } from '../validators/userValidator.js';
 import { userRepository } from '../repositories/userRepository.js';
 import { getAuthCookieOptions } from '../utils/cookieOptions.js';
+import { resolveAuthToken } from '../utils/resolveAuthToken.js';
 
 /**
  * POST /api/admin/login
@@ -65,10 +66,16 @@ export const adminMe = async (req, res, next) => {
       return res.status(200).json({ success: true, authenticated: false });
     }
 
+    const accessToken = await resolveAuthToken(token);
+
+    if (!accessToken) {
+      return res.status(200).json({ success: true, authenticated: false });
+    }
+
     const {
       data: { user },
       error,
-    } = await supabase.auth.getUser(token);
+    } = await supabase.auth.getUser(accessToken);
 
     if (error || !user) {
       return res.status(200).json({ success: true, authenticated: false });
@@ -192,11 +199,53 @@ export const getBookDetail = async (req, res, next) => {
 
 export const approveBook = async (req, res, next) => {
   try {
-    const result = await adminApprovalService.approveBook(req.params.id, req.user.id);
+    const result = await adminApprovalService.approveBook(req.params.id, req.user.id, {
+      skipValidation: req.body?.skipValidation === true || req.body?.approveChanges === true,
+    });
 
     res.status(200).json(
       formatSuccess(result, 'Book approved successfully'),
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const saveBookReviewState = async (req, res, next) => {
+  try {
+    const state = await adminApprovalService.saveReviewState(
+      req.params.id,
+      req.user.id,
+      req.body || {},
+    );
+    res.status(200).json(formatSuccess({ reviewState: state }, 'Review state saved'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const reviewBookContent = async (req, res, next) => {
+  try {
+    const { target, status, comment } = req.body || {};
+    const state = await adminApprovalService.reviewContent(req.params.id, req.user.id, {
+      target,
+      status,
+      comment,
+    });
+    res.status(200).json(formatSuccess({ reviewState: state }, 'Content review updated'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const requestBookChanges = async (req, res, next) => {
+  try {
+    const result = await adminApprovalService.requestChanges(
+      req.params.id,
+      req.user.id,
+      req.body || {},
+    );
+    res.status(200).json(formatSuccess(result, 'Changes requested — author notified'));
   } catch (error) {
     next(error);
   }

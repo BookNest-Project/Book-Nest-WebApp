@@ -190,17 +190,36 @@ async function main() {
 
   const bookId = book.id;
 
-  await supabase.from('book_formats').insert({
-    book_id: bookId,
-    format_type: 'PDF',
-    price: 199,
-    currency: 'ETB',
-    storage_path: 'demo/river-between-pages/manuscript.pdf',
-    page_count: 12,
-    file_size_bytes: 1024000,
-  });
+  const demoPdfUrl =
+    'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
 
-  console.log('✅ Demo book created:', bookId);
+  await supabase.from('book_formats').insert([
+    {
+      book_id: bookId,
+      format_type: 'PDF',
+      price: 199,
+      currency: 'ETB',
+      storage_path: 'demo/river-between-pages/manuscript.pdf',
+      file_url: demoPdfUrl,
+      mime_type: 'application/pdf',
+      page_count: 12,
+      file_size_bytes: 1024000,
+    },
+    {
+      book_id: bookId,
+      format_type: 'Audio',
+      price: 149,
+      currency: 'ETB',
+      storage_path: 'demo/river-between-pages/narration.mp3',
+      file_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+      mime_type: 'audio/mpeg',
+      duration_sec: 372,
+      file_size_bytes: 5500000,
+      page_count: null,
+    },
+  ]);
+
+  console.log('✅ Demo book created (PDF + Audio):', bookId);
 
   await adminApprovalService.approveBook(bookId, admin.id);
   console.log('✅ Book approved (baseline snapshot saved)');

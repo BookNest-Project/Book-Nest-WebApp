@@ -1,6 +1,7 @@
-import { supabase, supabaseAdmin } from '../config/supabase.js';
+import { supabaseAdmin } from '../config/supabase.js';
 import { UnauthorizedError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { resolveAuthToken } from '../utils/resolveAuthToken.js';
 
 function extractToken(req) {
   if (req.cookies?.token) {
@@ -23,7 +24,13 @@ export const authenticate = async (req, res, next) => {
       throw new UnauthorizedError('No token provided');
     }
 
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    const accessToken = await resolveAuthToken(token);
+
+    if (!accessToken) {
+      throw new UnauthorizedError('Invalid or expired token');
+    }
+
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken);
 
     if (error || !user) {
       logger.warn('Invalid token', { error: error?.message });

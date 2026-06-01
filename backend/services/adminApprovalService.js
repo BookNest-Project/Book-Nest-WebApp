@@ -3,9 +3,16 @@ import { adminApprovalRepository } from '../repositories/adminApprovalRepository
 import {
   buildBookSnapshot,
   computeFieldChanges,
+  formatsToSnapshot,
 } from '../utils/bookSnapshot.js';
+import { adminBookReviewService } from './adminBookReviewService.js';
+import {
+  bookReviewWorkflowRepository,
+  mapFormatRow,
+  buildFormatSlots,
+} from '../repositories/bookReviewWorkflowRepository.js';
 import { sendEmail } from './emailService.js';
-import { sendBookRejectionEmail } from './rejectionEmail.js';
+import { sendBookRejectionEmail, sendBookChangesRequestedEmail } from './rejectionEmail.js';
 import { userRepository } from '../repositories/userRepository.js';
 
 async function notifyAuthorAboutReview({
@@ -16,6 +23,7 @@ async function notifyAuthorAboutReview({
   body,
   reviewNote = null,
   rejectionEmail = null,
+  changesRequestedEmail = null,
 }) {
   if (!recipientUserId) {
     return {
@@ -54,11 +62,13 @@ async function notifyAuthorAboutReview({
   if (authorEmail) {
     const mail = rejectionEmail
       ? await sendBookRejectionEmail({ to: authorEmail, ...rejectionEmail })
-      : await sendEmail({
-          to: authorEmail,
-          subject,
-          text: body,
-        });
+      : changesRequestedEmail
+        ? await sendBookChangesRequestedEmail({ to: authorEmail, ...changesRequestedEmail })
+        : await sendEmail({
+            to: authorEmail,
+            subject,
+            text: body,
+          });
     emailSent = mail.sent;
     if (!mail.sent) emailReason = mail.reason || 'send_failed';
   }
@@ -390,12 +400,9 @@ export const adminApprovalService = {
 
     const genres = await adminApprovalRepository.findGenresByIds([book.genre_id].filter(Boolean));
     const genreName = genres[0]?.name ?? null;
-    const [users, formats] = await Promise.all([
-      adminApprovalRepository.findUsersByIds(
-        [book.uploaded_by, book.author_user_id, book.reviewed_by_admin_id].filter(Boolean),
-      ),
-      adminApprovalRepository.findFormatsByBookId(bookId),
-    ]);
+    const users = await adminApprovalRepository.findUsersByIds(
+      [book.uploaded_by, book.author_user_id, book.reviewed_by_admin_id].filter(Boolean),
+    );
 
     const formatCounts = await adminApprovalRepository.countFormatsByBookIds([bookId]);
     const authorProfiles = await adminApprovalRepository.findAuthorProfilesByIds(
@@ -412,21 +419,9 @@ export const adminApprovalService = {
     const authorUser = userMap[book.author_user_id || book.uploaded_by];
     const reviewer = userMap[book.reviewed_by_admin_id];
 
-    const proposed = buildBookSnapshot(book, genreName);
-    let previous =
-      book.submission_previous ||
-      (await adminApprovalRepository.findApprovedSnapshot(bookId));
-
-    if (typeof previous === 'string') {
-      try {
-        previous = JSON.parse(previous);
-      } catch {
-        previous = null;
-      }
-    }
-
+    const workflow = await adminBookReviewService.enrichBookDetail(book, item, users);
+    const { proposed, previous, changes, formats, ...workflowRest } = workflow;
     const isNewEntry = item.submissionType === 'new_entry';
-    const changes = previous ? computeFieldChanges(previous, proposed) : [];
     const dbActivity = await adminApprovalRepository.getActivityForBook(bookId);
 
     const activity = [
@@ -459,13 +454,14 @@ export const adminApprovalService = {
 
     return {
       ...item,
+      ...workflowRest,
       dbStatus: book.status,
       formats,
       proposed,
       previous: previous || null,
       changes: isNewEntry ? [] : changes,
       isNewEntry,
-      updateNote: submissionMeta?.updateNote || null,
+      updateNote: submissionMeta?.updateNote || workflowRest.updateRequest?.updateNote || null,
       submissionKind: submissionMeta?.submissionKind || item.submissionType,
       activity,
       authorProfile: {
@@ -498,18 +494,56 @@ export const adminApprovalService = {
     };
   },
 
-  async approveBook(bookId, adminId) {
+  async approveBook(bookId, adminId, options = {}) {
     const book = await adminApprovalRepository.findBookById(bookId);
 
     if (!book) throw new NotFoundError('Book');
-    if (!['pending_review', 'rejected'].includes(book.status)) {
+    if (!['pending_review', 'rejected', 'changes_requested'].includes(book.status)) {
       throw new ValidationError(
-        `Book cannot be approved from status "${book.status}". Expected pending_review or rejected.`,
+        `Book cannot be approved from status "${book.status}". Expected pending_review, changes_requested, or rejected.`,
       );
     }
 
-    const genres = await adminApprovalRepository.findGenresByIds([book.genre_id].filter(Boolean));
-    const snapshot = buildBookSnapshot(book, genres[0]?.name ?? null);
+    const formatsRaw = await adminApprovalRepository.findFormatsByBookId(bookId);
+    const formats = formatsRaw.map(mapFormatRow);
+    const formatSlots = buildFormatSlots(formats);
+    const reviewState = await bookReviewWorkflowRepository.getReviewState(book);
+    const authorUserId = book.author_user_id || book.uploaded_by;
+    const users = authorUserId
+      ? await adminApprovalRepository.findUsersByIds([authorUserId])
+      : [];
+    const revenueRow = await bookReviewWorkflowRepository.findRevenueAgreementForBook(book);
+    const revenueAgreement = adminBookReviewService.mapRevenueAgreement(revenueRow, {
+      name: book.author_name,
+      email: users[0]?.email,
+    });
+
+    if (revenueAgreement.signed) {
+      reviewState.checklist = {
+        ...reviewState.checklist,
+        revenueAgreementSigned: true,
+      };
+    }
+
+    if (!options.skipValidation) {
+      adminBookReviewService.validateApprovalGate({
+        formats: [formatSlots.pdf, formatSlots.audio],
+        reviewState,
+        skipContent: options.skipContent === true,
+      });
+    }
+
+    if (options.skipValidation || options.approveChanges) {
+      await adminBookReviewService.applyProposedChangesOnApproval(bookId);
+    }
+
+    const bookLive = (await adminApprovalRepository.findBookById(bookId)) || book;
+    const formatsRawLive = await adminApprovalRepository.findFormatsByBookId(bookId);
+    const genres = await adminApprovalRepository.findGenresByIds(
+      [bookLive.genre_id].filter(Boolean),
+    );
+    const snapshot = buildBookSnapshot(bookLive, genres[0]?.name ?? null, formatsRawLive);
+    snapshot.formats = formatsToSnapshot(formatsRawLive);
 
     let updated;
     try {
@@ -533,8 +567,19 @@ export const adminApprovalService = {
       /* optional */
     }
 
+    await adminBookReviewService.approvePendingUpdate(bookId, adminId);
+    await adminBookReviewService.recordVersionOnApproval(book, adminId, formatsRaw);
+
+    await bookReviewWorkflowRepository.logAudit({
+      bookId,
+      adminId,
+      action: 'book_approved',
+      newValue: { status: 'approved', version: book.version_number },
+    });
+
     await adminApprovalRepository.logActivity(bookId, adminId, 'approved', {
       title: book.title,
+      version: book.version_number,
     });
 
     const recipientId = book.author_user_id || book.uploaded_by;
@@ -549,7 +594,78 @@ export const adminApprovalService = {
         })
       : { notified: false };
 
-    return { book: updated, authorNotification };
+    const publisherId = book.publisher_user_id;
+    let publisherNotification = { notified: false };
+    if (publisherId) {
+      publisherNotification = await notifyAuthorAboutReview({
+        recipientUserId: publisherId,
+        bookId,
+        adminId,
+        subject: `Book approved: ${book.title}`,
+        body: `The book "${book.title}" you published has been approved.`,
+      });
+    }
+
+    return { book: updated, authorNotification, publisherNotification };
+  },
+
+  async saveReviewState(bookId, adminId, patch) {
+    return adminBookReviewService.saveReviewState(bookId, adminId, patch);
+  },
+
+  async reviewContent(bookId, adminId, payload) {
+    return adminBookReviewService.reviewContent(bookId, adminId, payload);
+  },
+
+  async requestChanges(bookId, adminId, payload = {}) {
+    const feedback = payload.feedback || payload.reason || '';
+    const result = await adminBookReviewService.requestChanges(bookId, adminId, feedback);
+
+    const book = await adminApprovalRepository.findBookById(bookId);
+    const authorUserId = result.recipientId;
+    const users = authorUserId
+      ? await adminApprovalRepository.findUsersByIds([authorUserId, adminId].filter(Boolean))
+      : [];
+    const authorUser = users.find((u) => u.id === authorUserId);
+    const adminUser = users.find((u) => u.id === adminId);
+
+    const changesRequestedEmail = {
+      authorName: book?.author_name || authorUser?.full_name,
+      bookTitle: book?.title || 'Your book',
+      bookId,
+      feedback: feedback.trim(),
+      reviewerName: adminUser?.full_name || adminUser?.email,
+      reviewerEmail: adminUser?.email,
+      requestedAt: new Date().toISOString(),
+    };
+
+    let authorNotification = { notified: false };
+    if (result.recipientId) {
+      authorNotification = await notifyAuthorAboutReview({
+        recipientUserId: result.recipientId,
+        bookId,
+        adminId,
+        subject: result.subject,
+        body: result.body,
+        reviewNote: feedback.trim(),
+        changesRequestedEmail,
+      });
+    }
+
+    const publisherId = book?.publisher_user_id;
+    let publisherNotification = { notified: false };
+    if (publisherId) {
+      publisherNotification = await notifyAuthorAboutReview({
+        recipientUserId: publisherId,
+        bookId,
+        adminId,
+        subject: result.subject,
+        body: result.body,
+        changesRequestedEmail,
+      });
+    }
+
+    return { book: result.book, authorNotification, publisherNotification };
   },
 
   async rejectBook(bookId, adminId, payload = {}, options = {}) {
@@ -602,6 +718,33 @@ export const adminApprovalService = {
     }
 
     await adminApprovalRepository.logActivity(bookId, adminId, 'rejected', reviewMetadata);
+
+    await bookReviewWorkflowRepository.logAudit({
+      bookId,
+      adminId,
+      action: 'book_rejected',
+      newValue: reviewMetadata,
+      comments: trimmed,
+    });
+
+    const updateRequest = await bookReviewWorkflowRepository.findPendingUpdateRequest(bookId);
+    if (updateRequest) {
+      await bookReviewWorkflowRepository.resolveUpdateRequest(updateRequest.id, {
+        status: 'rejected',
+        reviewed_by_admin_id: adminId,
+        reviewed_at: new Date().toISOString(),
+        rejection_reason: trimmed,
+      });
+      await bookReviewWorkflowRepository.insertVersion({
+        book_id: bookId,
+        version_label: book.version_number || '1.0',
+        status: 'rejected',
+        snapshot: updateRequest.proposed_snapshot,
+        formats_snapshot: updateRequest.proposed_formats,
+        rejected_by_admin_id: adminId,
+        rejection_reason: trimmed,
+      });
+    }
 
     let authorNotification = { notified: false, skipped: !notify };
     if (notify) {
@@ -690,7 +833,10 @@ export const adminApprovalService = {
       );
     }
 
-    await adminApprovalRepository.logActivity(bookId, adminId, 'approval_removed', null);
+    await adminApprovalRepository.logActivity(bookId, adminId, 'approval_removed', {
+      title: book.title,
+      note: 'Approval removed by admin — returned to queue',
+    });
     return updated;
   },
 

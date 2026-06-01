@@ -10,6 +10,7 @@ import rateLimit from 'express-rate-limit';
 // Import routes
 import userRoutes from './routes/userRoutes.js';
 import bookRoutes from './routes/bookRoutes.js';
+import authorRoutes from './routes/authorRoutes.js';
 import wishlistRoutes from './routes/wishlistRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import sellerRoutes from './routes/sellerRoutes.js';
@@ -18,6 +19,7 @@ import adminRoutes from './routes/adminRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import invitationRoutes from './routes/invitationRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
+import profileRoutes from './routes/profileRoutes.js';
 import { warnIfApprovalSchemaMissing } from './services/approvalSchemaCheck.js';
 import { warnIfInvitationSchemaMissing } from './services/invitationSchemaCheck.js';
 import { warnIfSmtpNotConfigured } from './services/smtpConfigCheck.js';
@@ -79,7 +81,9 @@ app.get('/api/health', (req, res) => {
 
 // Mount routes
 app.use('/api/auth', userRoutes);
+app.use('/api/users', profileRoutes);
 app.use('/api/books', bookRoutes);
+app.use('/api/authors', authorRoutes);
 app.use('/api/wishlist', wishlistRoutes); 
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/seller', sellerRoutes);

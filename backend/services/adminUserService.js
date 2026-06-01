@@ -1,4 +1,5 @@
 import { adminUserRepository } from '../repositories/adminUserRepository.js';
+import { recordAdminTask } from '../utils/adminTaskLogger.js';
 
 function displayNameForUser(user, profiles) {
   const { reader, author, publisher, admin } = profiles;
@@ -144,14 +145,15 @@ function buildProfileDetail(user, profile) {
 
 export const adminUserService = {
   async getStats() {
-    const [total, verifiedAuthors, banned, readers, publishers, admins] = await Promise.all([
+    const [total, authors, banned, readers, publishers, admins] = await Promise.all([
       adminUserRepository.countAll(),
-      adminUserRepository.countVerifiedAuthors(),
+      adminUserRepository.countByRole('author'),
       adminUserRepository.countBannedUsers(),
       adminUserRepository.countByRole('reader'),
       adminUserRepository.countByRole('publisher'),
       adminUserRepository.countByRole('admin'),
     ]);
+    const verifiedAuthors = await adminUserRepository.countVerifiedAuthors();
 
     const rawUsers = await adminUserRepository.listAllUsersRaw({ max: 5000 });
     const userIds = rawUsers.map((u) => u.id);
@@ -180,7 +182,7 @@ export const adminUserService = {
       verifiedPercent: verifiedPct,
       bannedAccounts: banned,
       pendingInvitations,
-      byRole: { readers, authors: verifiedAuthors, publishers, admins },
+      byRole: { readers, authors, publishers, admins },
     };
   },
 
@@ -431,6 +433,19 @@ export const adminUserService = {
       reason: trimmedReason,
     });
 
+    await recordAdminTask({
+      adminId,
+      category: 'users',
+      action: 'user_status_updated',
+      targetUserId: userId,
+      details: {
+        email: user.email,
+        role: user.role,
+        status: accountStatus,
+        reason: trimmedReason,
+      },
+    });
+
     return this.getUserDetail(userId);
   },
 
@@ -471,6 +486,14 @@ export const adminUserService = {
       reason: trimmedReason,
     });
 
+    await recordAdminTask({
+      adminId,
+      category: 'users',
+      action: 'user_banned',
+      targetUserId: userId,
+      details: { reason: trimmedReason, email: user.email, role: user.role },
+    });
+
     const [row] = await this.mapUsersToRows([
       await adminUserRepository.findUserById(userId),
     ]);
@@ -498,6 +521,14 @@ export const adminUserService = {
     await adminUserRepository.updateAccountStatus(userId, {
       status: 'active',
       reason: null,
+    });
+
+    await recordAdminTask({
+      adminId,
+      category: 'users',
+      action: 'user_approved',
+      targetUserId: userId,
+      details: { email: user.email, role: user.role },
     });
 
     const [row] = await this.mapUsersToRows([

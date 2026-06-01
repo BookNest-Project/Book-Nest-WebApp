@@ -15,6 +15,7 @@ import {
 } from '../utils/sanitizeInvitation.js';
 import { effectiveInvitationStatus, withEffectiveStatus } from '../utils/invitationStatus.js';
 import { logger } from '../utils/logger.js';
+import { recordAdminTask } from '../utils/adminTaskLogger.js';
 
 function formatInvitation(row, emailMeta = null) {
   if (!row) return null;
@@ -191,6 +192,19 @@ export const adminInvitationService = {
 
     const formatted = formatInvitation(row);
 
+    await recordAdminTask({
+      adminId,
+      category: 'invitations',
+      action: 'invitation_created',
+      details: {
+        email,
+        role: roleType,
+        recipientName: payload.recipientName.trim(),
+        expiresAt: expiresAt.toISOString(),
+        subject,
+      },
+    });
+
     if (payload.sendImmediately !== false) {
       try {
         return await this.sendInvitation(row.id, adminId);
@@ -254,6 +268,19 @@ export const adminInvitationService = {
       adminId,
       to: emailResult.recipientEmail || row.recipient_email,
     });
+
+    await recordAdminTask({
+      adminId,
+      category: 'invitations',
+      action: 'invitation_sent',
+      details: {
+        email: row.recipient_email,
+        role: row.role_type,
+        recipientName: row.recipient_name,
+        invitationId: id,
+      },
+    });
+
     return formatInvitation(updated, emailResult);
   },
 
@@ -365,19 +392,30 @@ export const adminInvitationService = {
     return formatInvitation(withEffectiveStatus(updated));
   },
 
-  async deleteInvitation(id) {
+  async deleteInvitation(id, adminId = null) {
     const row = await adminInvitationRepository.findById(id);
     if (!row) {
       const err = new Error('Invitation not found');
       err.statusCode = 404;
       throw err;
     }
-    if (row.status === 'accepted') {
-      const err = new Error('Cannot delete an accepted invitation');
-      err.statusCode = 400;
-      throw err;
-    }
     await adminInvitationRepository.delete(id);
+
+    if (adminId) {
+      await recordAdminTask({
+        adminId,
+        category: 'invitations',
+        action: 'invitation_deleted',
+        details: {
+          email: row.recipient_email,
+          role: row.role_type,
+          recipientName: row.recipient_name,
+          invitationId: id,
+          status: row.status,
+        },
+      });
+    }
+
     return { deleted: true };
   },
 

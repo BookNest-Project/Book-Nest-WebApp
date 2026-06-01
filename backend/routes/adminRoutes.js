@@ -11,6 +11,9 @@ import {
   rejectBook,
   notifyAuthorRejection,
   revertBookApproval,
+  saveBookReviewState,
+  reviewBookContent,
+  requestBookChanges,
   getAdminNotifications,
   markNotificationRead,
   markAllNotificationsRead,
@@ -27,7 +30,23 @@ import {
   deleteInvitation,
   updateInvitation,
 } from '../controllers/adminInvitation.js';
-import { getReportsCenter } from '../controllers/adminReports.js';
+import { getReportsCenter, getUserGrowthReport } from '../controllers/adminReports.js';
+import {
+  exportErrorLogs,
+  listErrorLogs,
+  resolveErrorLog,
+  unresolveErrorLog,
+} from '../controllers/adminErrorLogs.js';
+import {
+  getRevenueDashboard,
+  listRevenueSales,
+  getRevenueSettings,
+  updateRevenueSettings,
+  exportRevenueSales,
+} from '../controllers/adminRevenue.js';
+import { getAdminSettings, updateAdminSettings } from '../controllers/adminSettings.js';
+import { listAdminTasks } from '../controllers/adminTasks.js';
+import { streamBookContent } from '../controllers/adminBookContent.js';
 import { getDashboardOverview } from '../controllers/adminDashboard.js';
 import { uploadAdminAvatar, updateAdminProfile } from '../controllers/adminProfile.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
@@ -51,6 +70,7 @@ router.get('/', (req, res) => {
         listBooks: 'GET /api/admin/books/list?status=all|pending_review|approved|rejected',
         pendingBooks: 'GET /api/admin/books/queue/pending',
         bookDetail: 'GET /api/admin/books/:id',
+        bookContent: 'GET /api/admin/books/:id/content?format=pdf|audio',
         approveBook: 'POST /api/admin/books/:id/approve',
         rejectBook: 'POST /api/admin/books/:id/reject',
         notifyAuthorRejection: 'POST /api/admin/books/:id/notify-author',
@@ -68,6 +88,12 @@ router.get('/', (req, res) => {
         uploadProfileAvatar: 'POST /api/admin/profile/avatar',
         updateProfile: 'PATCH /api/admin/profile',
         reportsCenter: 'GET /api/admin/reports',
+        revenueDashboard: 'GET /api/admin/revenue/dashboard',
+        revenueSales: 'GET /api/admin/revenue/sales',
+        revenueExport: 'GET /api/admin/revenue/export',
+        revenueSettings: 'GET|PATCH /api/admin/revenue/settings',
+        platformSettings: 'GET|PATCH /api/admin/settings',
+        adminTasks: 'GET /api/admin/tasks',
         dashboardOverview: 'GET /api/admin/dashboard/overview',
       },
       auth: 'Cookie token or Authorization: Bearer <token from login response>',
@@ -101,7 +127,20 @@ router.post('/users/:id/ban', banUser);
 router.post('/users/:id/approve', approveUser);
 router.patch('/users/:id/status', updateUserStatus);
 router.get('/users', listUsers);
+router.get('/reports/user-growth', getUserGrowthReport);
 router.get('/reports', getReportsCenter);
+router.get('/error-logs/export', exportErrorLogs);
+router.get('/error-logs', listErrorLogs);
+router.patch('/error-logs/:id/resolve', resolveErrorLog);
+router.patch('/error-logs/:id/unresolve', unresolveErrorLog);
+router.get('/revenue/dashboard', getRevenueDashboard);
+router.get('/revenue/sales', listRevenueSales);
+router.get('/revenue/export', exportRevenueSales);
+router.get('/revenue/settings', getRevenueSettings);
+router.patch('/revenue/settings', updateRevenueSettings);
+router.get('/settings', getAdminSettings);
+router.patch('/settings', updateAdminSettings);
+router.get('/tasks', listAdminTasks);
 router.get('/dashboard/overview', getDashboardOverview);
 router.get('/books/queue/stats', getQueueStats);
 router.get('/books/queue/pending', getPendingBooks);
@@ -110,9 +149,13 @@ router.patch('/notifications/read-all', markAllNotificationsRead);
 router.patch('/notifications/:id/read', markNotificationRead);
 router.get('/books/list', listBooks);
 router.get('/books/pending', getPendingBooks);
+router.get('/books/:id/content', streamBookContent);
 router.get('/books/:id', getBookDetail);
 router.post('/books/:id/approve', approveBook);
 router.post('/books/:id/reject', rejectBook);
+router.post('/books/:id/request-changes', requestBookChanges);
+router.patch('/books/:id/review-state', saveBookReviewState);
+router.post('/books/:id/content-review', reviewBookContent);
 router.post('/books/:id/notify-author', notifyAuthorRejection);
 router.post('/books/:id/revert-approval', revertBookApproval);
 router.patch('/books/:id/review', validate(bookReviewStatusSchema), reviewBook);

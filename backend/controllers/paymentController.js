@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import chapa from '../config/chapa.js';
 import chapaFixed from '../config/chapa-fixed.js'; // Use fixed version
+import { platformSettingsRepository } from '../repositories/platformSettingsRepository.js';
 
 export const initiatePayment = async (req, res, next) => {
   try {
@@ -38,8 +39,8 @@ console.log('Starting payment for user:', userId);
         books (
           id,
           title,
-          author_id,
-          publisher_id,
+          author_user_id,
+          publisher_user_id,
           author_name,
           publisher_name
         )
@@ -274,8 +275,8 @@ async function processSuccessfulPayment(paymentId, buyerId) {
           *,
           books (
             id,
-            author_id,
-            publisher_id,
+            author_user_id,
+            publisher_user_id,
             title
           )
         )
@@ -300,41 +301,45 @@ async function processSuccessfulPayment(paymentId, buyerId) {
 
     if (ownershipError) throw ownershipError;
 
+    const commissionPercent = await platformSettingsRepository.getCommissionPercent();
+    const commissionRate = commissionPercent / 100;
+
     // 3. Process each sale
     for (const item of paymentItems) {
       const bookFormat = item.book_formats;
       const book = bookFormat.books;
-      
+      const formatKey = String(bookFormat.format_type || '').toLowerCase();
+
       // Determine seller (author or publisher)
-      let sellerId = book.author_id;
+      let sellerId = book.author_user_id;
       let isPublisherSale = false;
-      
-      // Check if publisher should get the sale
-      if (book.publisher_id) {
-        if (bookFormat.format_type === 'pdf') {
-          sellerId = book.publisher_id;
+
+      if (book.publisher_user_id) {
+        if (formatKey === 'pdf') {
+          sellerId = book.publisher_user_id;
           isPublisherSale = true;
         }
-        // For audio formats, author gets the sale
       }
 
-      // Calculate earnings (platform takes 20% commission)
       const salePrice = parseFloat(item.price);
-      const platformCommission = salePrice * 0.20;
-      const sellerEarnings = salePrice - platformCommission;
+      const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+      const lineTotal = salePrice * qty;
+      const platformCommission = lineTotal * commissionRate;
+      const sellerEarnings = lineTotal - platformCommission;
 
-      // Create sale record
       const saleRecord = {
         book_id: book.id,
         book_format_id: item.book_format_id,
         format_type: bookFormat.format_type,
         buyer_id: buyerId,
         seller_id: sellerId,
-        sale_price: salePrice,
+        sale_price: lineTotal,
         platform_commission: platformCommission,
         seller_earnings: sellerEarnings,
+        commission_rate: commissionPercent,
+        quantity: qty,
         payment_id: paymentId,
-        sale_date: new Date().toISOString()
+        sale_date: new Date().toISOString(),
       };
 
       // Insert sale
@@ -598,8 +603,8 @@ export const initiateMockPayment = async (req, res, next) => {
         books (
           id,
           title,
-          author_id,
-          publisher_id,
+          author_user_id,
+          publisher_user_id,
           author_name,
           publisher_name
         )

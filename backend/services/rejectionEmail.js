@@ -88,3 +88,141 @@ export async function sendBookRejectionEmail({
 
   return sendEmail({ to, subject, text, html });
 }
+
+/**
+ * Changes-requested notice — feedback is the main body of the email.
+ */
+export async function sendBookChangesRequestedEmail({
+  to,
+  authorName,
+  bookTitle,
+  bookId,
+  feedback,
+  reviewerName,
+  reviewerEmail,
+  requestedAt,
+}) {
+  const greetingName = authorName?.trim() || 'Author';
+  const reviewerLabel =
+    reviewerName && reviewerEmail
+      ? `${reviewerName} (${reviewerEmail})`
+      : reviewerName || reviewerEmail || 'BookNest moderation team';
+
+  const requestedLabel = requestedAt
+    ? new Date(requestedAt).toLocaleString('en-US', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+
+  const subject = `BookNest — changes requested for "${bookTitle}"`;
+
+  const text = [
+    `Dear ${greetingName},`,
+    '',
+    `An admin reviewed your update for "${bookTitle}" and has requested changes before it can be approved.`,
+    '',
+    `Book title: ${bookTitle}`,
+    `Reference ID: ${bookId}`,
+    `Reviewed by: ${reviewerLabel}`,
+    `Date: ${requestedLabel}`,
+    '',
+    'Feedback from the reviewer:',
+    '---',
+    feedback,
+    '---',
+    '',
+    'Please sign in to your Studio dashboard, apply the feedback, and resubmit when ready.',
+    '',
+    'Warm regards,',
+    'The BookNest Team',
+  ].join('\n');
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Georgia, 'Times New Roman', serif; color: #1a2a3a; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 24px;">
+  <p>Dear ${escapeHtml(greetingName)},</p>
+  <p>An admin reviewed your update for <strong>${escapeHtml(bookTitle)}</strong> and has requested changes before it can be approved.</p>
+  <table style="width:100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Book title</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(bookTitle)}</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Reference ID</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(bookId)}</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Reviewed by</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(reviewerLabel)}</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Date</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(requestedLabel)}</td></tr>
+  </table>
+  <p style="color:#92400e; font-weight:bold;">Feedback from the reviewer:</p>
+  <blockquote style="margin:12px 0; padding:16px; border-left:4px solid #d97706; background:#fffbeb; white-space:pre-wrap;">${escapeHtml(feedback).replace(/\n/g, '<br>')}</blockquote>
+  <p>Please sign in to your <strong>Studio</strong> dashboard, apply the feedback, and resubmit when ready.</p>
+  <p style="margin-top:32px;">Warm regards,<br><strong>The BookNest Team</strong></p>
+</body>
+</html>`;
+
+  return sendEmail({ to, subject, text, html });
+}
+
+/**
+ * Confirmation email when an author signs the revenue agreement.
+ */
+export async function sendRevenueAgreementSignedEmail({
+  to,
+  authorName,
+  agreementVersion,
+  authorSharePercent,
+  platformSharePercent,
+  signedAt,
+  studioUrl,
+}) {
+  const greetingName = authorName?.trim() || 'Author';
+  const signedLabel = signedAt
+    ? new Date(signedAt).toLocaleString('en-US', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+
+  const subject = 'BookNest — revenue agreement signed successfully';
+
+  const text = [
+    `Dear ${greetingName},`,
+    '',
+    'Thank you for signing the BookNest Author Revenue Agreement.',
+    '',
+    `Agreement version: ${agreementVersion}`,
+    `Signed on: ${signedLabel}`,
+    `Your revenue share: ${authorSharePercent}%`,
+    `Platform share: ${platformSharePercent}%`,
+    '',
+    'You may now submit books for admin review from your Studio dashboard.',
+    studioUrl ? `Open Studio: ${studioUrl}` : '',
+    '',
+    'A copy of this confirmation is stored in your account. If you did not sign this agreement, contact support immediately.',
+    '',
+    'Warm regards,',
+    'The BookNest Team',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Georgia, 'Times New Roman', serif; color: #1a2a3a; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 24px;">
+  <p>Dear ${escapeHtml(greetingName)},</p>
+  <p>Thank you for signing the <strong>BookNest Author Revenue Agreement</strong>. Your signature has been recorded successfully.</p>
+  <table style="width:100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Agreement version</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(agreementVersion)}</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Signed on</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(signedLabel)}</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Your revenue share</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(String(authorSharePercent))}%</td></tr>
+    <tr><td style="padding:8px; border:1px solid #e8e2d9; background:#f5f1eb;"><strong>Platform share</strong></td><td style="padding:8px; border:1px solid #e8e2d9;">${escapeHtml(String(platformSharePercent))}%</td></tr>
+  </table>
+  <p style="color:#047857; font-weight:bold;">✓ You may now submit books for admin review from your Studio dashboard.</p>
+  ${studioUrl ? `<p><a href="${escapeHtml(studioUrl)}" style="color:#B85C38;">Open BookNest Studio</a></p>` : ''}
+  <p style="margin-top:24px; font-size:13px; color:#64748b;">If you did not sign this agreement, please contact BookNest support immediately.</p>
+  <p style="margin-top:32px;">Warm regards,<br><strong>The BookNest Team</strong></p>
+</body>
+</html>`;
+
+  return sendEmail({ to, subject, text, html });
+}

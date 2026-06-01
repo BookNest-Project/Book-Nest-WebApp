@@ -82,6 +82,81 @@ export const adminNotificationService = {
     });
   },
 
+  async notifyAdminsRevenueAgreementSigned({
+    authorUserId,
+    authorName,
+    authorEmail,
+    agreementVersion,
+    pendingBooks = [],
+  }) {
+    if (!authorUserId) return;
+
+    const admins = await findAdminUsers();
+    const authorLabel = authorName || authorEmail || 'An author';
+    const bookLines =
+      pendingBooks.length > 0
+        ? pendingBooks.map((b) => `• ${b.title} (${APP_URL}/dashboard/books/${b.id})`).join('\n')
+        : null;
+
+    const subject = `Revenue agreement signed: ${authorLabel}`;
+    const body = [
+      `${authorLabel} signed the BookNest revenue agreement (v${agreementVersion}).`,
+      authorEmail ? `Email: ${authorEmail}` : '',
+      '',
+      pendingBooks.length > 0
+        ? 'Pending submissions from this author can now proceed to full approval:'
+        : 'No pending submissions are waiting for this author right now.',
+      bookLines || '',
+      '',
+      `Admin console: ${APP_URL}/dashboard/books`,
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
+
+    const htmlBooks =
+      pendingBooks.length > 0
+        ? `<ul>${pendingBooks
+            .map(
+              (b) =>
+                `<li><a href="${APP_URL}/dashboard/books/${b.id}">${b.title}</a></li>`,
+            )
+            .join('')}</ul>`
+        : '<p>No pending submissions are waiting for this author.</p>';
+
+    await Promise.all(
+      admins.map(async (admin) => {
+        const primaryBookId = pendingBooks[0]?.id ?? null;
+        await insertNotification({
+          adminId: admin.id,
+          bookId: primaryBookId,
+          type: 'revenue_agreement_signed',
+          title: `Revenue agreement signed — ${authorLabel}`,
+          body: `${authorLabel} completed the revenue agreement. ${
+            pendingBooks.length > 0
+              ? `${pendingBooks.length} pending book(s) can proceed to approval.`
+              : 'No pending books in queue.'
+          }`,
+        });
+
+        await sendEmail({
+          to: admin.email,
+          subject,
+          text: body,
+          html: `<p><strong>${authorLabel}</strong> signed the BookNest revenue agreement (v${agreementVersion}).</p>
+            ${authorEmail ? `<p>Author email: ${authorEmail}</p>` : ''}
+            ${htmlBooks}
+            <p><a href="${APP_URL}/dashboard/books">Open BookNest Admin</a></p>`,
+        });
+      }),
+    );
+
+    logger.info('Admins notified of revenue agreement signed', {
+      authorUserId,
+      adminCount: admins.length,
+      pendingBookCount: pendingBooks.length,
+    });
+  },
+
   async getNotificationsForAdmin(adminId, { limit = 20, unreadOnly = false } = {}) {
     let query = supabaseAdmin
       .from('admin_notifications')

@@ -5,27 +5,10 @@ import { adminProfileRepository } from '../repositories/adminProfileRepository.j
 import { userRepository } from '../repositories/userRepository.js';
 import { ForbiddenError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-
-async function saveAvatarToAuthMetadata(userId, avatarUrl) {
-  const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
-  if (error) {
-    logger.error('Auth user fetch failed', { userId, error: error.message });
-    throw new Error('Failed to update profile photo');
-  }
-
-  const meta = data?.user?.user_metadata || {};
-  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-    user_metadata: {
-      ...meta,
-      avatar_url: avatarUrl,
-    },
-  });
-
-  if (updateError) {
-    logger.error('Auth metadata update failed', { userId, error: updateError.message });
-    throw new Error('Failed to save profile photo');
-  }
-}
+import {
+  mergeAuthProfileMetadata,
+  saveAvatarToAuthMetadata,
+} from '../utils/avatarMetadata.js';
 
 async function saveProfileToAuthMetadata(userId, { displayName, bio }) {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -35,15 +18,7 @@ async function saveProfileToAuthMetadata(userId, { displayName, bio }) {
   }
 
   const meta = data?.user?.user_metadata || {};
-  const nextMeta = { ...meta };
-
-  if (displayName !== undefined) {
-    nextMeta.display_name = displayName;
-    nextMeta.displayName = displayName;
-  }
-  if (bio !== undefined) {
-    nextMeta.bio = bio || null;
-  }
+  const nextMeta = mergeAuthProfileMetadata(meta, { displayName, bio });
 
   const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
     user_metadata: nextMeta,
@@ -69,8 +44,8 @@ function normalizeDisplayName(value) {
 function normalizeBio(value) {
   if (value === undefined || value === null) return null;
   const trimmed = String(value).trim();
-  if (trimmed.length > 1000) {
-    throw new ValidationError('Bio must be 1000 characters or less');
+  if (trimmed.length > 100) {
+    throw new ValidationError('Bio must be 100 characters or less');
   }
   return trimmed.length ? trimmed : null;
 }
@@ -86,25 +61,27 @@ export const adminProfileService = {
     }
 
     const existing = await adminProfileRepository.findByUserId(userId);
+    const previousAvatarUrl = existing?.avatar_url || null;
     const upload = await fileUploadService.uploadAvatarImage(file, userId);
-
-    if (existing?.avatar_url) {
-      const oldPath = fileUploadService.extractStoragePath(existing.avatar_url);
-      if (oldPath) {
-        await fileUploadService.deleteFile(oldPath);
-      }
-    }
 
     await saveAvatarToAuthMetadata(userId, upload.url);
 
-    if (existing) {
-      try {
-        await adminProfileRepository.updateAvatar(userId, upload.url);
-      } catch (profileError) {
-        logger.warn('admin_profiles avatar sync skipped', {
-          userId,
-          error: profileError.message,
-        });
+    try {
+      await adminProfileRepository.upsertAvatar(userId, {
+        avatarUrl: upload.url,
+        displayName: existing?.display_name || dbUser.email?.split('@')[0],
+      });
+    } catch (profileError) {
+      logger.warn('admin_profiles avatar sync skipped', {
+        userId,
+        error: profileError.message,
+      });
+    }
+
+    if (previousAvatarUrl && previousAvatarUrl !== upload.url) {
+      const oldPath = fileUploadService.extractStoragePath(previousAvatarUrl);
+      if (oldPath) {
+        await fileUploadService.deleteFile(oldPath);
       }
     }
 
@@ -139,30 +116,36 @@ export const adminProfileService = {
       bio: safeBio,
     });
 
-    const existing = await adminProfileRepository.findByUserId(userId);
-    if (existing) {
-      try {
+    try {
+      const existing = await adminProfileRepository.findByUserId(userId);
+      const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+      const authAvatar =
+        authData?.user?.user_metadata?.avatar_url ||
+        authData?.user?.user_metadata?.avatarUrl ||
+        null;
+
+      if (existing) {
         await adminProfileRepository.updateProfile(userId, {
           displayName: safeName,
           bio: safeBio,
         });
-      } catch (profileError) {
-        if (safeName && safeBio !== undefined) {
-          try {
-            await adminProfileRepository.updateProfile(userId, { displayName: safeName });
-          } catch (nameOnlyError) {
-            logger.warn('admin_profiles profile sync skipped', {
-              userId,
-              error: nameOnlyError.message,
-            });
-          }
-        } else {
-          logger.warn('admin_profiles profile sync skipped', {
-            userId,
-            error: profileError.message,
-          });
+        if (authAvatar && !existing.avatar_url) {
+          await adminProfileRepository.updateAvatar(userId, authAvatar);
+        }
+      } else {
+        await adminProfileRepository.upsertProfile(userId, {
+          displayName: safeName ?? dbUser.email?.split('@')[0],
+          bio: safeBio ?? null,
+        });
+        if (authAvatar) {
+          await adminProfileRepository.updateAvatar(userId, authAvatar);
         }
       }
+    } catch (profileError) {
+      logger.warn('admin_profiles profile sync skipped', {
+        userId,
+        error: profileError.message,
+      });
     }
 
     const session = await authService.getUserSession(userId);

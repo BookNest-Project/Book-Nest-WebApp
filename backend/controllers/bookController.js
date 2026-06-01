@@ -5,6 +5,7 @@ import { ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { adminApprovalRepository } from '../repositories/adminApprovalRepository.js';
 import { adminNotificationService } from '../services/adminNotificationService.js';
+import { authorStudioService } from '../services/authorStudioService.js';
 
 export const bookController = {
 
@@ -312,6 +313,8 @@ export const bookController = {
       validateBookId(id);
 
       const updateNote = req.body?.updateNote || req.body?.update_note || '';
+
+      await authorStudioService.requireRevenueAgreement(req.user.id);
 
       const { book, error } = await adminApprovalRepository.submitBookForReview(
         id,
