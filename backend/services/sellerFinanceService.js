@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase.js';
+import { validatePayoutDetails } from '../utils/payoutValidation.js';
 import { logger } from '../utils/logger.js';
 import { sendWithdrawalEmail } from './emailService.js';
 
@@ -6,6 +7,52 @@ const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || '15'
 
 function roundMoney(n) {
   return Math.round(n * 100) / 100;
+}
+
+async function sumWithdrawalsByStatus(userId) {
+  const { data, error } = await supabaseAdmin
+    .from('withdrawal_requests')
+    .select('amount, status')
+    .eq('user_id', userId);
+
+  if (error) throw error;
+
+  let pending = 0;
+  let paidOut = 0;
+
+  for (const row of data || []) {
+    const amount = parseFloat(row.amount) || 0;
+    if (row.status === 'pending') pending += amount;
+    else if (row.status === 'approved' || row.status === 'paid') paidOut += amount;
+  }
+
+  return {
+    pending: roundMoney(pending),
+    paidOut: roundMoney(paidOut),
+  };
+}
+
+async function computeLedgerBalances(userId) {
+  const { data: earnings, error: earningsError } = await supabaseAdmin
+    .from('seller_earnings')
+    .select('net_amount')
+    .eq('seller_id', userId);
+
+  if (earningsError) throw earningsError;
+
+  const totalNet = roundMoney(
+    (earnings || []).reduce((sum, row) => sum + (parseFloat(row.net_amount) || 0), 0)
+  );
+
+  const { pending, paidOut } = await sumWithdrawalsByStatus(userId);
+  const available = roundMoney(Math.max(0, totalNet - pending - paidOut));
+
+  return {
+    totalNet,
+    available_balance: available,
+    pending_balance: pending,
+    paid_out: paidOut,
+  };
 }
 
 export const sellerFinanceService = {
@@ -81,6 +128,46 @@ export const sellerFinanceService = {
     logger.info('Seller earning recorded', { sellerId, netAmount, transactionId });
   },
 
+  async syncWallet(userId) {
+    const balances = await computeLedgerBalances(userId);
+
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('seller_wallets')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+
+    const payload = {
+      available_balance: balances.available_balance,
+      pending_balance: balances.pending_balance,
+      currency: existing?.currency || 'ETB',
+      updated_at: new Date().toISOString(),
+    };
+
+    if (existing) {
+      const { data, error } = await supabaseAdmin
+        .from('seller_wallets')
+        .update(payload)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('seller_wallets')
+      .insert({ user_id: userId, ...payload })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
   async getWallet(userId) {
     const { data, error } = await supabaseAdmin
       .from('seller_wallets')
@@ -90,14 +177,30 @@ export const sellerFinanceService = {
 
     if (error) throw error;
 
-    return (
-      data || {
-        user_id: userId,
-        available_balance: 0,
-        pending_balance: 0,
-        currency: 'ETB',
-      }
-    );
+    if (!data) {
+      const synced = await this.syncWallet(userId);
+      return (
+        synced || {
+          user_id: userId,
+          available_balance: 0,
+          pending_balance: 0,
+          currency: 'ETB',
+        }
+      );
+    }
+
+    const ledger = await computeLedgerBalances(userId);
+    const storedAvailable = parseFloat(data.available_balance) || 0;
+    const storedPending = parseFloat(data.pending_balance) || 0;
+
+    if (
+      storedAvailable !== ledger.available_balance ||
+      storedPending !== ledger.pending_balance
+    ) {
+      return this.syncWallet(userId);
+    }
+
+    return data;
   },
 
   async getEarnings(userId, { limit = 50, offset = 0 } = {}) {
@@ -143,8 +246,8 @@ export const sellerFinanceService = {
       platform_fees,
       net_earnings,
       platform_fee_percent: PLATFORM_FEE_PERCENT,
-      available_balance: parseFloat(wallet.available_balance) || 0,
-      pending_withdrawal: parseFloat(wallet.pending_balance) || 0,
+      available_balance: roundMoney(parseFloat(wallet.available_balance) || 0),
+      pending_withdrawal: roundMoney(parseFloat(wallet.pending_balance) || 0),
       currency: wallet.currency || 'ETB',
       sale_count: rows.length,
     };
@@ -162,7 +265,7 @@ export const sellerFinanceService = {
   },
 
   async requestWithdrawal(userId, userEmail, { amount, payout_details }) {
-    const wallet = await this.getWallet(userId);
+    const wallet = await this.syncWallet(userId);
     const available = parseFloat(wallet.available_balance) || 0;
     const reqAmount = parseFloat(amount);
 
@@ -177,6 +280,13 @@ export const sellerFinanceService = {
       throw err;
     }
 
+    const payoutCheck = validatePayoutDetails(payout_details);
+    if (!payoutCheck.ok) {
+      const err = new Error(payoutCheck.message);
+      err.statusCode = 400;
+      throw err;
+    }
+
     const { data: withdrawal, error } = await supabaseAdmin
       .from('withdrawal_requests')
       .insert({
@@ -184,7 +294,7 @@ export const sellerFinanceService = {
         amount: reqAmount,
         currency: wallet.currency || 'ETB',
         status: 'pending',
-        payout_details,
+        payout_details: payoutCheck.data,
       })
       .select()
       .single();

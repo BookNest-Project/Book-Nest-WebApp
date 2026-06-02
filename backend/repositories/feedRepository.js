@@ -52,16 +52,21 @@ async function loadTagsForPosts(postIds) {
   }
 
   if (bookIds.length) {
-    const { data: books } = await supabaseAdmin
+    const { data: books, error: booksError } = await supabaseAdmin
       .from('books')
-      .select('id, title, cover_url')
+      .select('id, title, cover_image_url')
       .in('id', bookIds);
+
+    if (booksError) {
+      logger.warn('Failed to load book tags for posts', { error: booksError.message, bookIds });
+    }
+
     for (const b of books || []) {
       booksMap[b.id] = {
         id: b.id,
         type: 'book',
         title: b.title,
-        coverUrl: b.cover_url,
+        coverUrl: b.cover_image_url,
       };
     }
   }
@@ -71,7 +76,16 @@ async function loadTagsForPosts(postIds) {
     if (!byPost.has(tag.post_id)) byPost.set(tag.post_id, []);
     const item =
       tag.tag_type === 'user' ? usersMap[tag.tag_id] : booksMap[tag.tag_id];
-    if (item) byPost.get(tag.post_id).push(item);
+    if (item) {
+      byPost.get(tag.post_id).push(item);
+    } else if (tag.tag_type === 'book' && tag.tag_id) {
+      byPost.get(tag.post_id).push({
+        id: tag.tag_id,
+        type: 'book',
+        title: 'View book',
+        coverUrl: null,
+      });
+    }
   }
   return byPost;
 }

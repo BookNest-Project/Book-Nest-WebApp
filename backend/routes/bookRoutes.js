@@ -27,6 +27,7 @@ router.post('/', authenticate, bookController.createBook);
 router.put('/:id', authenticate, bookController.updateBook);
 router.delete('/:id', authenticate, bookController.deleteBook);
 router.put('/:id/cover', authenticate, bookController.updateBookCover); 
+router.get('/formats/:id/preview', authenticate, bookController.previewBookFormat);
 router.get('/formats/:id', authenticate, bookController.getBookFormatById);
 
 router.get('/:id/reviews', reviewController.listReviews);

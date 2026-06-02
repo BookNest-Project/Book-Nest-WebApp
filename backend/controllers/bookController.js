@@ -1,4 +1,5 @@
 import { bookService } from '../services/bookService.js';
+import { bookRepository } from '../repositories/bookRepository.js';
 import { validateBookQuery, validateBookId } from '../validators/bookValidator.js';
 import { formatSuccess } from '../utils/responseFormatter.js';
 import { logger } from '../utils/logger.js';
@@ -346,5 +347,72 @@ async getBookFormatById(req, res, next) {
     next(error);
   }
 },
+
+  /**
+   * Stream uploaded book file for owner preview (PDF inline / audio).
+   * GET /api/books/formats/:id/preview
+   */
+  async previewBookFormat(req, res, next) {
+    try {
+      const userId = req.user.id;
+      const { id: formatId } = req.params;
+
+      const { format, error } = await bookRepository.getFormatForOwnerPreview(formatId, userId);
+
+      if (error === 'Format not found') {
+        return res.status(404).json({ success: false, error: { message: error } });
+      }
+      if (error?.includes('permission')) {
+        return res.status(403).json({ success: false, error: { message: error } });
+      }
+      if (error || !format) {
+        return res.status(400).json({ success: false, error: { message: error || 'Preview unavailable' } });
+      }
+
+      const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
+        .from('booknest')
+        .createSignedUrl(format.storage_path, 120);
+
+      if (signedUrlError || !signedUrlData?.signedUrl) {
+        return res.status(500).json({
+          success: false,
+          error: { message: 'Failed to generate preview link' },
+        });
+      }
+
+      const response = await fetch(signedUrlData.signedUrl);
+      if (!response.ok) {
+        throw new Error(`Storage returned ${response.status}`);
+      }
+
+      const isPdf = format.format_type === 'PDF';
+      const contentType = isPdf ? 'application/pdf' : 'audio/mpeg';
+      const fileExt = isPdf ? 'pdf' : 'mp3';
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `inline; filename="preview-${formatId}.${fileExt}"`);
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+
+      if (response.body) {
+        const { Readable } = await import('stream');
+        const { pipeline } = await import('stream/promises');
+        const nodeStream = Readable.fromWeb(response.body);
+        await pipeline(nodeStream, res);
+        return;
+      }
+
+      const fileBuffer = await response.arrayBuffer();
+      res.setHeader('Content-Length', fileBuffer.byteLength);
+      res.send(Buffer.from(fileBuffer));
+    } catch (error) {
+      logger.error('Format preview error', { error: error.message });
+      next(error);
+    }
+  },
 
 };

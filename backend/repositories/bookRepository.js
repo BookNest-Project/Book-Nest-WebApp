@@ -1216,4 +1216,37 @@ async updateBookFromUpload(bookId, userId, bookUpdates, formatUpdates = []) {
       return { languages: [], error: error.message };
     }
   },
+
+  async getFormatForOwnerPreview(formatId, userId) {
+    try {
+      const { data: row, error } = await supabaseAdmin
+        .from('book_formats')
+        .select('id, format_type, storage_path, book:books!inner(uploaded_by)')
+        .eq('id', formatId)
+        .single();
+
+      if (error || !row) {
+        return { format: null, error: 'Format not found' };
+      }
+
+      if (row.book?.uploaded_by !== userId) {
+        return { format: null, error: 'You do not have permission to preview this file' };
+      }
+
+      if (!row.storage_path) {
+        return { format: null, error: 'No file has been uploaded for this format yet' };
+      }
+
+      return {
+        format: {
+          id: row.id,
+          format_type: row.format_type,
+          storage_path: row.storage_path,
+        },
+        error: null,
+      };
+    } catch (error) {
+      return { format: null, error: error.message };
+    }
+  },
 }
