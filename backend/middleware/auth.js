@@ -1,10 +1,11 @@
 import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { UnauthorizedError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { getAccessTokenFromRequest } from '../utils/getAccessToken.js';
 
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.cookies?.token;
+    const token = getAccessTokenFromRequest(req);
 
     if (!token) {
       throw new UnauthorizedError('No token provided');
@@ -78,7 +79,7 @@ export const authenticate = async (req, res, next) => {
  */
 export const authenticateOptional = async (req, res, next) => {
   try {
-    const token = req.cookies?.token;
+    const token = getAccessTokenFromRequest(req);
     if (!token) return next();
 
     const { data: { user }, error } = await supabase.auth.getUser(token);

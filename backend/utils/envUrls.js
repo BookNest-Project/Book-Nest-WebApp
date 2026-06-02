@@ -5,6 +5,9 @@
 /** Stable production frontend — also listed in index.js CORS allowlist */
 const DEFAULT_PRODUCTION_FRONTEND = 'https://book-nest-frontend-v2-main.vercel.app';
 
+/** Optional separate admin deployment (Vercel). */
+const DEFAULT_PRODUCTION_ADMIN = null;
+
 const PLACEHOLDER_HOST_PATTERNS = [
   /^your-vercel-frontend-url/i,
   /^your-app/i,
@@ -123,18 +126,78 @@ export function getFrontendUrl() {
   );
 }
 
+/**
+ * Admin console URL (separate Vercel project). Used for CORS only.
+ * Admin login/API calls use the Railway backend; this is not used for email redirects.
+ */
+export function getAdminFrontendUrl() {
+  const url = pickFirstUrl([
+    process.env.ADMIN_FRONTEND_URL,
+    process.env.NODE_ENV !== 'production' ? 'http://localhost:3001' : DEFAULT_PRODUCTION_ADMIN,
+  ]);
+
+  if (url) {
+    assertNotPlaceholderHost(url, 'ADMIN_FRONTEND_URL');
+    warnIfPreviewHost(url, 'ADMIN_FRONTEND_URL');
+    return url;
+  }
+
+  return null;
+}
+
+/** Merge explicit env origins with main + admin frontends (deduped). */
+export function getAllowedCorsOrigins() {
+  const origins = new Set([
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+    DEFAULT_PRODUCTION_FRONTEND,
+  ]);
+
+  for (const key of ['FRONTEND_URL', 'ADMIN_FRONTEND_URL']) {
+    const normalized = normalizeBaseUrl(process.env[key]);
+    if (normalized) origins.add(normalized);
+  }
+
+  const extra = process.env.ALLOWED_ORIGINS;
+  if (extra && typeof extra === 'string') {
+    for (const part of extra.split(',')) {
+      const normalized = normalizeBaseUrl(part.trim());
+      if (normalized) origins.add(normalized);
+    }
+  }
+
+  try {
+    const frontend = getFrontendUrl();
+    if (frontend) origins.add(frontend);
+  } catch {
+    // FRONTEND_URL may be unset in some dev setups
+  }
+
+  const admin = getAdminFrontendUrl();
+  if (admin) origins.add(admin);
+
+  return [...origins];
+}
+
 export function logResolvedUrls(logger) {
   try {
     const backend = getBackendUrl();
     const frontend = getFrontendUrl();
+    const adminFrontend = getAdminFrontendUrl();
 
     logger.info('Resolved public URLs', {
       backend,
       frontend,
+      adminFrontend: adminFrontend || '(not set — add ADMIN_FRONTEND_URL on Railway)',
+      corsOrigins: getAllowedCorsOrigins(),
       chapa_callback: `${backend}/api/webhooks/chapa`,
       chapa_return: `${frontend}/checkout/result`,
       auth_verify_redirect: `${frontend}/auth/callback?intent=verify`,
       auth_reset_redirect: `${frontend}/auth/callback?intent=recovery`,
+      admin_note:
+        'FRONTEND_URL = main reader app (emails, checkout). ADMIN_FRONTEND_URL = admin Vercel app (CORS). Admin login uses NEXT_PUBLIC_API_URL on the admin project.',
       supabase_hint:
         'Add auth_verify_redirect, auth_reset_redirect, /reset-password, /verify, and /auth/callback under Supabase → Authentication → URL Configuration → Redirect URLs',
     });

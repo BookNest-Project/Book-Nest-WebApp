@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { logger } from './utils/logger.js';
-import { logResolvedUrls, getFrontendUrl } from './utils/envUrls.js';
+import { logResolvedUrls, getFrontendUrl, getAdminFrontendUrl, getAllowedCorsOrigins } from './utils/envUrls.js';
 import { isSmtpConfigured, isResendConfigured, isBrevoConfigured, getEmailTransportMode, getResolvedFromAddress } from './services/emailService.js';
 import { describeAuthEmailPolicy, shouldAttemptSmtp, shouldRegisterViaPublicSupabaseSignUp, isHostedBackend } from './services/authEmailPolicy.js';
 
@@ -51,7 +51,14 @@ logger.info('Email transport', {
   frontendUrl: process.env.FRONTEND_URL?.trim() || '(not set)',
   authVerifyRedirect: (() => {
     try {
-      return `${getFrontendUrl()}/auth/verify`;
+      return `${getFrontendUrl()}/auth/callback?intent=verify`;
+    } catch {
+      return null;
+    }
+  })(),
+  adminFrontendUrl: (() => {
+    try {
+      return getAdminFrontendUrl();
     } catch {
       return null;
     }
@@ -67,10 +74,12 @@ app.set('trust proxy', 1);
 // Health check (MUST be before other middleware)
 app.get("/api/health", (req, res) => {
   let frontendUrl = null;
+  let adminFrontendUrl = null;
   let verifyRedirect = null;
   try {
     frontendUrl = getFrontendUrl();
-    verifyRedirect = `${frontendUrl}/auth/verify`;
+    adminFrontendUrl = getAdminFrontendUrl();
+    verifyRedirect = `${frontendUrl}/auth/callback?intent=verify`;
   } catch {
     // optional — health still OK
   }
@@ -91,6 +100,8 @@ app.get("/api/health", (req, res) => {
         : 'Set FRONTEND_URL on Railway',
     },
     frontendUrl,
+    adminFrontendUrl,
+    corsOrigins: getAllowedCorsOrigins(),
   });
 });
 
@@ -98,12 +109,7 @@ app.get("/api/health", (req, res) => {
 app.use(helmet());
 
 // ✅ FIX 2: Updated CORS configuration for production
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "https://book-nest-frontend-v2-main.vercel.app",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
+const allowedOrigins = getAllowedCorsOrigins();
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
@@ -200,10 +206,12 @@ app.use('/api/public', publicRoute);
 // 404 handler
 app.use((req, res) => {
   logger.warn('Endpoint not found', { path: req.originalUrl, method: req.method });
-  res.status(404).json({ 
-    error: 'Endpoint not found',
-    path: req.originalUrl,
-    method: req.method
+  res.status(404).json({
+    success: false,
+    error: {
+      message: `Endpoint not found: ${req.method} ${req.originalUrl}`,
+      code: 'NOT_FOUND',
+    },
   });
 });
 

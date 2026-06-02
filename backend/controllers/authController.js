@@ -9,6 +9,7 @@ import {
   resendVerificationSchema,
   confirmEmailSchema,
 } from '../validators/authValidator.js';
+import { getAccessTokenFromRequest } from '../utils/getAccessToken.js';
 
 export const authController = {
   register: [
@@ -88,6 +89,8 @@ export const authController = {
           data: {
             ...result.session,
             rememberMe: result.rememberMe,
+            /** Admin app runs on a separate origin; Bearer auth avoids cross-site cookie issues. */
+            accessToken: result.token,
           },
         });
       } catch (error) {
@@ -98,7 +101,7 @@ export const authController = {
 
   logout: async (req, res, next) => {
     try {
-      const token = req.cookies?.token;
+      const token = getAccessTokenFromRequest(req);
       await authService.logout(token);
 
       res.clearCookie('token', {
