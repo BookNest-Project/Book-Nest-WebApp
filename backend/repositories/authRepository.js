@@ -20,12 +20,17 @@ import {
   shouldRegisterViaPublicSupabaseSignUp,
 } from '../services/authEmailPolicy.js';
 
+function getAuthCallbackUrl(intent) {
+  const base = `${getFrontendUrl()}/auth/callback`;
+  return intent ? `${base}?intent=${encodeURIComponent(intent)}` : base;
+}
+
 function getEmailVerificationRedirectUrl() {
-  return `${getFrontendUrl()}/auth/verify`;
+  return getAuthCallbackUrl('verify');
 }
 
 function getPasswordResetRedirectUrl() {
-  return `${getFrontendUrl()}/reset-password`;
+  return getAuthCallbackUrl('recovery');
 }
 
 function mapSupabaseAuthError(error) {
