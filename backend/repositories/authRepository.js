@@ -33,6 +33,10 @@ function getPasswordResetRedirectUrl() {
   return getAuthCallbackUrl('recovery');
 }
 
+function getInviteRegistrationRedirectUrl() {
+  return getAuthCallbackUrl('invite');
+}
+
 function mapSupabaseAuthError(error) {
   const message = error?.message?.toLowerCase() || '';
   if (message.includes('rate limit')) {
@@ -176,6 +180,7 @@ async function deliverPasswordResetEmail(email) {
 export const authRepository = {
   getEmailVerificationRedirectUrl,
   getPasswordResetRedirectUrl,
+  getInviteRegistrationRedirectUrl,
 
   isAuthEmailVerified(authUser) {
     return !!(authUser?.email_confirmed_at || authUser?.confirmed_at);
@@ -331,6 +336,18 @@ export const authRepository = {
     return { user: data.user, session: data.session, error: null };
   },
 
+  async refreshSession(refreshToken) {
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+
+    if (error || !data.session) {
+      return { session: null, error: error || new Error('No session returned') };
+    }
+
+    return { session: data.session, user: data.user, error: null };
+  },
+
   /**
    * Reset password using access token from email link
    */
@@ -385,6 +402,58 @@ export const authRepository = {
 
     logger.info('Password reset successful');
     return true;
+  },
+
+  /**
+   * Set password from an invite link and keep the session for immediate sign-in.
+   */
+  async completeInviteRegistration(accessToken, newPassword, refreshToken = null) {
+    const tempClient = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY
+    );
+
+    if (refreshToken) {
+      const { error: sessionError } = await tempClient.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (sessionError) {
+        logger.error('Invite setSession error', { error: sessionError.message });
+        throw mapSupabaseAuthError(sessionError);
+      }
+    } else {
+      const { error: userError } = await tempClient.auth.getUser(accessToken);
+      if (userError) {
+        logger.error('Invite token invalid', { error: userError.message });
+        throw new Error('This invitation link has expired. Ask your admin for a new invite.');
+      }
+    }
+
+    const updateClient = refreshToken
+      ? tempClient
+      : createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+          global: { headers: { Authorization: `Bearer ${accessToken}` } },
+        });
+
+    const { error } = await updateClient.auth.updateUser({ password: newPassword });
+
+    if (error) {
+      logger.error('Invite password set error', { error: error.message });
+      const msg = error.message?.toLowerCase() || '';
+      if (msg.includes('session') || msg.includes('jwt') || msg.includes('expired')) {
+        throw new Error('This invitation link has expired. Ask your admin for a new invite.');
+      }
+      throw mapSupabaseAuthError(error);
+    }
+
+    const { data: sessionData, error: sessionReadError } = await tempClient.auth.getSession();
+    if (sessionReadError || !sessionData.session) {
+      throw new Error('Could not complete registration. Please try again.');
+    }
+
+    logger.info('Invite registration password set', { userId: sessionData.session.user.id });
+    return sessionData.session;
   },
 
   /**

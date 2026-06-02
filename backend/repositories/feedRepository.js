@@ -1,6 +1,7 @@
 import { followRepository } from '../repositories/followRepository.js';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
+import { getActiveUserIdSet } from '../utils/activeUsers.js';
 
 const POST_SELECT = `
   id,
@@ -158,7 +159,13 @@ export const feedRepository = {
 
       if (error) throw error;
 
-      const formattedPosts = await formatPostsList(posts, userId, followingIds);
+      const activeUserIds = await getActiveUserIdSet();
+      const visiblePosts = (posts || []).filter((post) => {
+        const author = Array.isArray(post.user) ? post.user[0] : post.user;
+        return author?.id && activeUserIds.has(author.id) && post.status === 'published';
+      });
+
+      const formattedPosts = await formatPostsList(visiblePosts, userId, followingIds);
 
       return {
         posts: formattedPosts,
@@ -209,6 +216,19 @@ export const feedRepository = {
 
   async getPublicUserPosts(targetUserId, viewerUserId = null, page = 1, limit = 20) {
     try {
+      const { data: targetUser, error: targetUserError } = await supabaseAdmin
+        .from('users')
+        .select('id, account_status')
+        .eq('id', targetUserId)
+        .maybeSingle();
+
+      if (targetUserError) throw targetUserError;
+      if (!targetUser || targetUser.account_status !== 'active') {
+        const err = new Error('Posts are private');
+        err.statusCode = 404;
+        throw err;
+      }
+
       const isOwnProfile = viewerUserId === targetUserId;
       let canView = isOwnProfile;
 
@@ -269,6 +289,27 @@ export const feedRepository = {
       .single();
 
     if (error) throw error;
+
+    const author = Array.isArray(post.user) ? post.user[0] : post.user;
+    if (post.status !== 'published') {
+      const err = new Error('Post not found');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (author?.id) {
+      const { data: authorUser } = await supabaseAdmin
+        .from('users')
+        .select('account_status')
+        .eq('id', author.id)
+        .maybeSingle();
+      if (!authorUser || authorUser.account_status !== 'active') {
+        const err = new Error('Post not found');
+        err.statusCode = 404;
+        throw err;
+      }
+    }
+
     const [formatted] = await formatPostsList([post], viewerUserId);
     return formatted;
   },

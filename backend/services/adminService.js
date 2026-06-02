@@ -2,7 +2,6 @@ import { supabaseAdmin } from '../config/supabase.js';
 import { authRepository } from '../repositories/authRepository.js';
 import { adminRepository } from '../repositories/adminRepository.js';
 import { userRepository } from '../repositories/userRepository.js';
-import { getFrontendUrl } from '../utils/envUrls.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { sendWithdrawalEmail } from './emailService.js';
@@ -14,7 +13,11 @@ function roundMoney(n) {
 export const adminService = {
   getDashboardStats: () => adminRepository.getDashboardStats(),
 
+  getSystemAnalytics: () => adminRepository.getSystemAnalytics(),
+
   listUsers: (filters) => adminRepository.listUsers(filters),
+
+  getUserById: (userId) => adminRepository.getUserById(userId),
 
   async updateUserStatus(userId, account_status) {
     if (!['active', 'suspended', 'disabled'].includes(account_status)) {
@@ -25,10 +28,21 @@ export const adminService = {
     if (user.role === 'admin') {
       throw new ValidationError('Cannot change status of another admin account');
     }
-    return adminRepository.updateUserStatus(userId, account_status);
+
+    const updated = await adminRepository.updateUserStatus(userId, account_status);
+
+    if (account_status === 'active') {
+      await adminRepository.setUserContentVisibility(userId, true);
+    } else {
+      await adminRepository.setUserContentVisibility(userId, false);
+    }
+
+    return updated;
   },
 
   listBooks: (filters) => adminRepository.listBooks(filters),
+
+  getBookById: (bookId) => adminRepository.getBookById(bookId),
 
   reviewBook: (bookId, adminId, payload) =>
     adminRepository.reviewBook(bookId, adminId, payload),
@@ -107,13 +121,13 @@ export const adminService = {
       throw new ValidationError('A user with this email already exists');
     }
 
-    const redirectTo = `${getFrontendUrl()}/auth/callback`;
+    const redirectTo = authRepository.getInviteRegistrationRedirectUrl();
     const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(normalized, {
       redirectTo,
       data: {
         display_name: display_name || pen_name || company_name || normalized.split('@')[0],
-        pen_name: pen_name || null,
-        company_name: company_name || null,
+        role,
+        needs_profile_setup: true,
       },
     });
 
@@ -128,8 +142,8 @@ export const adminService = {
       app_metadata: { role },
       user_metadata: {
         display_name: display_name || pen_name || company_name,
-        pen_name,
-        company_name,
+        role,
+        needs_profile_setup: true,
       },
     });
 
@@ -140,29 +154,7 @@ export const adminService = {
       .update({ role, updated_at: new Date().toISOString() })
       .eq('id', userId);
 
-    if (role === 'author') {
-      await adminRepository.createAuthorProfile({
-        user_id: userId,
-        pen_name: pen_name || display_name || normalized.split('@')[0],
-        full_name: display_name || null,
-        approval_status: 'approved',
-        created_by_admin_id: adminId,
-        approved_by_admin_id: adminId,
-        approved_at: new Date().toISOString(),
-      });
-    }
-
-    if (role === 'publisher') {
-      await adminRepository.createPublisherProfile({
-        user_id: userId,
-        company_name: company_name || display_name || normalized.split('@')[0],
-        approval_status: 'approved',
-        created_by_admin_id: adminId,
-        approved_by_admin_id: adminId,
-        approved_at: new Date().toISOString(),
-      });
-    }
-
+    // Profile (pen name / company name) is completed by the user on first sign-in.
     logger.info('User invited', { userId, email: normalized, role, adminId });
 
     return {
@@ -175,33 +167,22 @@ export const adminService = {
 
   createAuthorProfile: (adminId, body) =>
     adminRepository.createAuthorProfile({
-      user_id: body.user_id || null,
+      user_id: body.user_id,
       pen_name: body.pen_name,
       full_name: body.full_name || null,
       bio: body.bio || null,
       avatar_url: body.avatar_url || null,
       website_url: body.website_url || null,
-      support_email: body.support_email || null,
-      approval_status: body.approval_status,
-      created_by_admin_id: adminId,
-      approved_by_admin_id: body.approval_status === 'approved' ? adminId : null,
-      approved_at: body.approval_status === 'approved' ? new Date().toISOString() : null,
     }),
 
   createPublisherProfile: (adminId, body) =>
     adminRepository.createPublisherProfile({
-      user_id: body.user_id || null,
+      user_id: body.user_id,
       company_name: body.company_name,
-      legal_name: body.legal_name || null,
-      tax_id: body.tax_id || null,
       bio: body.bio || null,
-      logo_url: body.logo_url || null,
+      avatar_url: body.avatar_url || body.logo_url || null,
       website_url: body.website_url || null,
       support_email: body.support_email || null,
-      approval_status: body.approval_status,
-      created_by_admin_id: adminId,
-      approved_by_admin_id: body.approval_status === 'approved' ? adminId : null,
-      approved_at: body.approval_status === 'approved' ? new Date().toISOString() : null,
     }),
 
   linkAuthorProfile: (id, userId, adminId) =>

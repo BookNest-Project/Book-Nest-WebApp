@@ -215,20 +215,76 @@ export const profileRepository = {
       if (error) throw error;
 
       if (user.role === 'author' && updates.pen_name) {
-        await supabaseAdmin
+        const { data: existing } = await supabaseAdmin
           .from('author_profiles')
-          .update({ pen_name: updates.pen_name, updated_at: new Date().toISOString() })
-          .eq('user_id', userId);
+          .select('user_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (existing) {
+          const authorUpdate = {
+            pen_name: updates.pen_name,
+            updated_at: new Date().toISOString(),
+          };
+          if (updates.full_name !== undefined) {
+            authorUpdate.full_name = updates.full_name;
+          }
+          const { error: authorError } = await supabaseAdmin
+            .from('author_profiles')
+            .update(authorUpdate)
+            .eq('user_id', userId);
+          if (authorError) throw authorError;
+        } else {
+          const { error: authorError } = await supabaseAdmin.from('author_profiles').insert({
+            user_id: userId,
+            pen_name: updates.pen_name,
+            full_name: updates.full_name || null,
+          });
+          if (authorError) throw authorError;
+        }
       } else if (user.role === 'publisher' && updates.company_name) {
-        await supabaseAdmin
+        const { data: existing } = await supabaseAdmin
           .from('publisher_profiles')
-          .update({ company_name: updates.company_name, updated_at: new Date().toISOString() })
-          .eq('user_id', userId);
+          .select('user_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (existing) {
+          const { error: publisherError } = await supabaseAdmin
+            .from('publisher_profiles')
+            .update({
+              company_name: updates.company_name,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', userId);
+          if (publisherError) throw publisherError;
+        } else {
+          const { error: publisherError } = await supabaseAdmin.from('publisher_profiles').insert({
+            user_id: userId,
+            company_name: updates.company_name,
+          });
+          if (publisherError) throw publisherError;
+        }
       } else if (user.role === 'reader' && updates.display_name) {
-        await supabaseAdmin
+        const { data: existing } = await supabaseAdmin
           .from('reader_profiles')
-          .update({ display_name: updates.display_name, updated_at: new Date().toISOString() })
-          .eq('user_id', userId);
+          .select('user_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (existing) {
+          const { error: readerError } = await supabaseAdmin
+            .from('reader_profiles')
+            .update({ display_name: updates.display_name, updated_at: new Date().toISOString() })
+            .eq('user_id', userId);
+          if (readerError) throw readerError;
+        } else {
+          const { error: readerError } = await supabaseAdmin.from('reader_profiles').insert({
+            user_id: userId,
+            display_name: updates.display_name,
+          });
+          if (readerError) throw readerError;
+        }
       }
 
       return { error: null };

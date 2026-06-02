@@ -1,12 +1,15 @@
 import express from 'express';
 import {
   getDashboardStats,
+  getSystemAnalytics,
   createAuthorProfile,
   createCategory,
   createPublisherProfile,
   inviteUser,
+  getUserById,
   linkAuthorProfile,
   linkPublisherProfile,
+  getBookById,
   listBooks,
   listReports,
   listUsers,
@@ -32,11 +35,14 @@ const router = express.Router();
 router.use(authenticate, authorize(['admin']));
 
 router.get('/dashboard', getDashboardStats);
+router.get('/analytics', getSystemAnalytics);
 router.get('/users', listUsers);
+router.get('/users/:id', getUserById);
 router.patch('/users/:id/status', updateUserStatus);
 router.post('/invites', inviteUser);
 
 router.get('/books', listBooks);
+router.get('/books/:id', getBookById);
 router.patch('/books/:id/review', validate(bookReviewStatusSchema), reviewBook);
 router.patch('/books/:bookId/formats/:formatId/review', validate(bookReviewStatusSchema), reviewBookFormat);
 

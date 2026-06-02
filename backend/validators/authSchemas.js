@@ -58,3 +58,21 @@ export const resendVerificationSchema = z.object({
 export const confirmEmailSchema = z.object({
   access_token: z.string().min(1, 'Verification link is invalid or expired'),
 });
+
+export const refreshTokenSchema = z.object({
+  refresh_token: z.string().min(1, 'Refresh token is required'),
+});
+
+export const inviteTokenSchema = z.object({
+  access_token: z.string().min(1, 'Invitation link is invalid or expired'),
+  refresh_token: z.string().optional(),
+});
+
+export const completeInviteSchema = z.object({
+  access_token: z.string().min(1, 'Invitation link is invalid or expired'),
+  refresh_token: z.string().optional(),
+  password: passwordSchema,
+  pen_name: z.string().trim().optional(),
+  company_name: z.string().trim().optional(),
+  full_name: z.string().trim().max(120).optional(),
+});

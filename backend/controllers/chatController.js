@@ -189,6 +189,23 @@ export const chatController = {
     }
   },
 
+  async previewGroupInvite(req, res, next) {
+    try {
+      const { token } = req.params;
+      const preview = await chatRepository.previewGroupInvite(token, req.user.id);
+      res.status(200).json(formatSuccess(preview, 'Invite preview'));
+    } catch (error) {
+      if (
+        error.message === 'Invalid or expired invite' ||
+        error.message === 'Invite link has expired' ||
+        error.message === 'Invalid group invite'
+      ) {
+        return res.status(400).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+
   async addGroupMember(req, res, next) {
     try {
       const { chatId } = req.params;

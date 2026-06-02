@@ -10,10 +10,34 @@ export const getDashboardStats = async (req, res, next) => {
   }
 };
 
+export const getSystemAnalytics = async (req, res, next) => {
+  try {
+    const analytics = await adminService.getSystemAnalytics();
+    res.json(formatSuccess(analytics, 'System analytics'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const listUsers = async (req, res, next) => {
   try {
     const users = await adminService.listUsers(req.query);
     res.json(formatSuccess({ users }, 'Users retrieved'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getUserById = async (req, res, next) => {
+  try {
+    const detail = await adminService.getUserById(req.params.id);
+    if (!detail) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'User not found', code: 'NOT_FOUND' },
+      });
+    }
+    res.json(formatSuccess(detail, 'User retrieved'));
   } catch (error) {
     next(error);
   }
@@ -32,6 +56,21 @@ export const listBooks = async (req, res, next) => {
   try {
     const books = await adminService.listBooks(req.query);
     res.json(formatSuccess({ books }, 'Books retrieved'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getBookById = async (req, res, next) => {
+  try {
+    const book = await adminService.getBookById(req.params.id);
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'Book not found', code: 'NOT_FOUND' },
+      });
+    }
+    res.json(formatSuccess(book, 'Book retrieved'));
   } catch (error) {
     next(error);
   }

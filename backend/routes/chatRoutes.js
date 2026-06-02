@@ -9,6 +9,7 @@ router.use(authenticate);
 router.get('/', chatController.getUserChats);
 router.post('/direct', chatController.getOrCreateDirectChat);
 router.post('/join/:token', chatController.joinGroupViaInvite);
+router.get('/join/:token/preview', chatController.previewGroupInvite);
 
 router.post('/groups', chatController.createGroupChat);
 router.post('/groups/:chatId/members', chatController.addGroupMember);

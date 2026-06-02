@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase.js';
+import { getActiveUserIdSet } from '../utils/activeUsers.js';
 import { logger } from '../utils/logger.js';
 import { fileUploadService } from '../services/fileUploadService.js';
 
@@ -665,6 +666,7 @@ async updateBookCover(bookId, userId, coverImagePath, coverImageUrl) {
         publication_date,
         cover_image_url,
         status,
+        uploaded_by,
         created_at,
         updated_at,
         genre:genres!inner (
@@ -706,8 +708,11 @@ async updateBookCover(bookId, userId, coverImagePath, coverImageUrl) {
       return { books: [], total: 0, error: error.message };
     }
 
+    const activeUserIds = await getActiveUserIdSet();
+    const visibleBooks = (books || []).filter((book) => activeUserIds.has(book.uploaded_by));
+
     // Get formats for each book
-    const allBookIds = books.map(b => b.id);
+    const allBookIds = visibleBooks.map(b => b.id);
     let formatsMap = {};
 
     if (allBookIds.length > 0) {
@@ -734,14 +739,14 @@ async updateBookCover(bookId, userId, coverImagePath, coverImageUrl) {
       }
     }
 
-    const booksWithFormats = books.map(book => ({
+    const booksWithFormats = visibleBooks.map(book => ({
       ...book,
       formats: formatsMap[book.id] || [],
     }));
 
     return {
       books: booksWithFormats,
-      total: count || 0,
+      total: visibleBooks.length,
       error: null,
     };
   } catch (error) {
@@ -917,6 +922,7 @@ async findById(bookId, userId = null) {
         cover_image_url,
         status,
         uploaded_by,
+        is_active,
         created_at,
         updated_at,
         genre:genres!inner (
@@ -938,6 +944,17 @@ async findById(bookId, userId = null) {
     const isOwner = userId && book.uploaded_by === userId;
     if (!isOwner && book.status !== 'approved') {
       return { book: null, error: 'Book not found' };
+    }
+
+    if (!isOwner && book.uploaded_by) {
+      const { data: uploader } = await supabaseAdmin
+        .from('users')
+        .select('account_status')
+        .eq('id', book.uploaded_by)
+        .maybeSingle();
+      if (!uploader || uploader.account_status !== 'active' || !book.is_active) {
+        return { book: null, error: 'Book not found' };
+      }
     }
 
     let formatsQuery = supabaseAdmin
@@ -1110,15 +1127,19 @@ async updateBookFromUpload(bookId, userId, bookUpdates, formatUpdates = []) {
         .maybeSingle();
 
       if (existingFmt) {
+        const formatPatch = {
+          price: fmt.price,
+          storage_path: fmt.storage_path,
+          file_size_bytes: fmt.file_size_bytes,
+          page_count: fmt.page_count ?? null,
+          duration_sec: fmt.duration_sec ?? null,
+        };
+        if (existingBook.status === 'approved' && fmt.storage_path) {
+          formatPatch.is_active = false;
+        }
         await supabaseAdmin
           .from('book_formats')
-          .update({
-            price: fmt.price,
-            storage_path: fmt.storage_path,
-            file_size_bytes: fmt.file_size_bytes,
-            page_count: fmt.page_count ?? null,
-            duration_sec: fmt.duration_sec ?? null,
-          })
+          .update(formatPatch)
           .eq('id', existingFmt.id);
       } else {
         const isActive = existingBook.status !== 'approved';

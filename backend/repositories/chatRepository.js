@@ -836,6 +836,52 @@ export const chatRepository = {
     return chat;
   },
 
+  async previewGroupInvite(token, userId) {
+    const { data: invite, error } = await supabaseAdmin
+      .from('chat_invites')
+      .select('id, chat_id, expires_at, is_active')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invite || !invite.is_active) {
+      throw new Error('Invalid or expired invite');
+    }
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      throw new Error('Invite link has expired');
+    }
+
+    const { data: chat, error: chatError } = await supabaseAdmin
+      .from('chats')
+      .select('id, type, name')
+      .eq('id', invite.chat_id)
+      .single();
+
+    if (chatError) throw chatError;
+    if (chat.type !== 'group') throw new Error('Invalid group invite');
+
+    const { count, error: countError } = await supabaseAdmin
+      .from('chat_participants')
+      .select('user_id', { count: 'exact', head: true })
+      .eq('chat_id', chat.id);
+
+    if (countError) throw countError;
+
+    const { data: existing } = await supabaseAdmin
+      .from('chat_participants')
+      .select('user_id')
+      .eq('chat_id', chat.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    return {
+      id: chat.id,
+      name: chat.name,
+      memberCount: count ?? 0,
+      alreadyMember: Boolean(existing),
+    };
+  },
+
   async addGroupMember(chatId, userId, newMemberId) {
     try {
       const { data: chat, error: chatError } = await supabaseAdmin

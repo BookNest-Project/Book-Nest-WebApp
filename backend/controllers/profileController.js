@@ -17,7 +17,8 @@ export const profileController = {
   async updateProfile(req, res, next) {
     try {
       const userId = req.user.id;
-      const { display_name, pen_name, company_name, bio, location, website_url } = req.body;
+      const { display_name, pen_name, company_name, full_name, bio, location, website_url } =
+        req.body;
 
       const updates = {
         bio,
@@ -26,6 +27,7 @@ export const profileController = {
         display_name,
         pen_name,
         company_name,
+        full_name,
       };
 
       await profileRepository.updateProfile(userId, updates);

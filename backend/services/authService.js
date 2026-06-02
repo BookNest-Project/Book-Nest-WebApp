@@ -1,7 +1,8 @@
 // backend/services/authService.js
 import { userRepository } from '../repositories/userRepository.js';
 import { authRepository } from '../repositories/authRepository.js';
-import { supabaseAdmin } from '../config/supabase.js';
+import { profileRepository } from '../repositories/profileRepository.js';
+import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { UnauthorizedError, ValidationError, ForbiddenError, NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -227,6 +228,10 @@ export const authService = {
       needsGenreOnboarding = favoriteGenres.length === 0;
     }
 
+    const needsProfileSetup =
+      (dbUser.role === 'author' && !profile?.pen_name) ||
+      (dbUser.role === 'publisher' && !profile?.company_name);
+
     logger.info('User logged in successfully', { userId: dbUser.id, role: dbUser.role });
 
     return {
@@ -235,6 +240,7 @@ export const authService = {
       expiresAt: expiresAtMs,
       rememberMe: !!rememberMe,
       needsGenreOnboarding,
+      needsProfileSetup,
       session: authSession,
     };
   },
@@ -307,6 +313,107 @@ export const authService = {
       throw new ValidationError(message);
     }
     return { message: 'Password updated successfully. You can now login with your new password.' };
+  },
+
+  async getInvitePreview(accessToken) {
+    const authUser = await authRepository.getUserFromAccessToken(accessToken);
+    if (!authUser) {
+      throw new ValidationError('This invitation link is invalid or has expired.');
+    }
+
+    const dbUser = await userRepository.findById(authUser.id);
+    const role =
+      dbUser?.role || authUser.app_metadata?.role || authUser.user_metadata?.role || null;
+
+    if (!['author', 'publisher'].includes(role)) {
+      throw new ValidationError('This invitation is only for author or publisher accounts.');
+    }
+
+    return {
+      email: authUser.email,
+      role,
+      display_name: authUser.user_metadata?.display_name || null,
+    };
+  },
+
+  async completeInviteRegistration(
+    accessToken,
+    newPassword,
+    refreshToken,
+    { pen_name, company_name, full_name } = {}
+  ) {
+    const previewUser = await authRepository.getUserFromAccessToken(accessToken);
+    if (!previewUser) {
+      throw new ValidationError('This invitation link is invalid or has expired.');
+    }
+
+    const dbUser = await userRepository.findById(previewUser.id);
+    if (!dbUser) {
+      throw new ValidationError('Account not found. Please contact support.');
+    }
+
+    if (!['author', 'publisher'].includes(dbUser.role)) {
+      throw new ValidationError('This invitation is only for author or publisher accounts.');
+    }
+
+    if (dbUser.role === 'author' && !pen_name?.trim()) {
+      throw new ValidationError('Pen name is required');
+    }
+    if (dbUser.role === 'publisher' && !company_name?.trim()) {
+      throw new ValidationError('Company name is required');
+    }
+
+    const session = await authRepository.completeInviteRegistration(
+      accessToken,
+      newPassword,
+      refreshToken
+    );
+
+    await authRepository.markEmailConfirmedInAuth(session.user.id);
+    await userRepository.updateEmailVerification(
+      session.user.id,
+      true,
+      new Date().toISOString()
+    );
+
+    await profileRepository.updateProfile(session.user.id, {
+      pen_name: dbUser.role === 'author' ? pen_name.trim() : undefined,
+      company_name: dbUser.role === 'publisher' ? company_name.trim() : undefined,
+      full_name: full_name?.trim() || undefined,
+    });
+
+    await supabaseAdmin.auth.admin.updateUserById(session.user.id, {
+      user_metadata: {
+        ...previewUser.user_metadata,
+        needs_profile_setup: false,
+        pen_name: dbUser.role === 'author' ? pen_name.trim() : undefined,
+        company_name: dbUser.role === 'publisher' ? company_name.trim() : undefined,
+      },
+    });
+
+    let profile = null;
+    if (dbUser.role === 'author') {
+      profile = await userRepository.findAuthorProfile(session.user.id);
+    } else {
+      profile = await userRepository.findPublisherProfile(session.user.id);
+    }
+
+    const authSession = createAuthSession(dbUser, profile, SESSION_DURATION_DEFAULT_MS);
+
+    logger.info('Invite registration completed', {
+      userId: session.user.id,
+      role: dbUser.role,
+    });
+
+    return {
+      token: session.access_token,
+      refreshToken: session.refresh_token,
+      expiresAt: new Date(authSession.expiresAt).getTime(),
+      rememberMe: false,
+      needsGenreOnboarding: false,
+      needsProfileSetup: false,
+      session: authSession,
+    };
   },
 
   async resendVerification(email) {
@@ -400,5 +507,70 @@ export const authService = {
     }
 
     return createAuthSession(dbUser, profile, SESSION_DURATION_DEFAULT_MS);
+  },
+
+  async getAuthContinuationFlags(userId) {
+    const dbUser = await userRepository.findById(userId);
+    if (!dbUser) {
+      return { needsProfileSetup: false, needsGenreOnboarding: false };
+    }
+
+    let profile = null;
+    switch (dbUser.role) {
+      case 'reader':
+        profile = await userRepository.findReaderProfile(userId);
+        break;
+      case 'author':
+        profile = await userRepository.findAuthorProfile(userId);
+        break;
+      case 'publisher':
+        profile = await userRepository.findPublisherProfile(userId);
+        break;
+      default:
+        break;
+    }
+
+    const needsProfileSetup =
+      (dbUser.role === 'author' && !profile?.pen_name) ||
+      (dbUser.role === 'publisher' && !profile?.company_name);
+
+    let needsGenreOnboarding = false;
+    if (dbUser.role === 'reader') {
+      const favoriteGenres = await userRepository.findFavoriteGenres(userId);
+      needsGenreOnboarding = favoriteGenres.length === 0;
+    }
+
+    return { needsProfileSetup, needsGenreOnboarding };
+  },
+
+  async refreshAccessToken(refreshToken) {
+    if (!refreshToken?.trim()) {
+      throw new UnauthorizedError('Refresh token required');
+    }
+
+    const { session, error } = await authRepository.refreshSession(refreshToken.trim());
+
+    if (error || !session?.access_token) {
+      logger.warn('Token refresh failed', { error: error?.message });
+      throw new UnauthorizedError('Session expired. Please sign in again.');
+    }
+
+    const { data: authUser, error: userError } = await supabase.auth.getUser(session.access_token);
+    if (userError || !authUser?.user) {
+      throw new UnauthorizedError('Session expired. Please sign in again.');
+    }
+
+    const dbUser = await userRepository.findById(authUser.user.id);
+    if (!dbUser || dbUser.account_status !== 'active') {
+      throw new UnauthorizedError('Account is not active');
+    }
+
+    return {
+      token: session.access_token,
+      refreshToken: session.refresh_token,
+      expiresAt: session.expires_at
+        ? new Date(session.expires_at).getTime()
+        : Date.now() + SESSION_DURATION_DEFAULT_MS,
+    };
   },
 };

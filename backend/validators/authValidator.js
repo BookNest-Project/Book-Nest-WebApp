@@ -8,4 +8,7 @@ export {
   resetPasswordSchema,
   resendVerificationSchema,
   confirmEmailSchema,
+  refreshTokenSchema,
+  inviteTokenSchema,
+  completeInviteSchema,
 } from './authSchemas.js';
