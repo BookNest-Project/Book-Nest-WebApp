@@ -2,21 +2,22 @@
 
 export const PAYOUT_METHODS = ['cbe', 'abyssinia', 'telebirr'];
 
-const CBE_ACCOUNT_PATTERN = /^\d{10,13}$/;
-const ABYSSINIA_ACCOUNT_PATTERN = /^\d{13}$/;
-const TELEBIRR_PHONE_PATTERN = /^09\d{8}$/;
+const CBE_ACCOUNT_PATTERN = /^1000\d{9}$/;
+const ABYSSINIA_ACCOUNT_PATTERN = /^\d{8}$|^\d{9}$/;
+const TELEBIRR_INPUT_PATTERN = /^(09|2519|\+2519|\+2517)\d{8}$/;
 
 function normalizeDigits(value) {
   return String(value ?? '').replace(/\D/g, '');
 }
 
-export function normalizeEthiopianMobile(value) {
-  const digits = normalizeDigits(value);
-  if (!digits) return null;
+export function normalizeTelebirrPhone(value) {
+  const trimmed = String(value ?? '').trim();
+  if (!TELEBIRR_INPUT_PATTERN.test(trimmed)) return null;
 
+  const digits = normalizeDigits(trimmed);
   if (digits.length === 10 && digits.startsWith('09')) return digits;
   if (digits.length === 12 && digits.startsWith('2519')) return `0${digits.slice(3)}`;
-  if (digits.length === 9 && digits.startsWith('9')) return `0${digits}`;
+  if (digits.length === 12 && digits.startsWith('2517')) return `0${digits.slice(3)}`;
 
   return null;
 }
@@ -35,7 +36,7 @@ export function validatePayoutDetails(input) {
   if (method === 'cbe') {
     const digits = normalizeDigits(input.account_number);
     if (!CBE_ACCOUNT_PATTERN.test(digits)) {
-      return { ok: false, message: 'CBE account must be 10–13 digits (numbers only).' };
+      return { ok: false, message: 'CBE account must be 13 digits and start with 1000.' };
     }
     return {
       ok: true,
@@ -46,7 +47,7 @@ export function validatePayoutDetails(input) {
   if (method === 'abyssinia') {
     const digits = normalizeDigits(input.account_number);
     if (!ABYSSINIA_ACCOUNT_PATTERN.test(digits)) {
-      return { ok: false, message: 'Bank of Abyssinia account must be exactly 13 digits.' };
+      return { ok: false, message: 'Bank of Abyssinia account must be 8 or 9 digits.' };
     }
     return {
       ok: true,
@@ -54,11 +55,11 @@ export function validatePayoutDetails(input) {
     };
   }
 
-  const normalized = normalizeEthiopianMobile(input.telebirr_phone ?? input.mobile_money);
-  if (!normalized || !TELEBIRR_PHONE_PATTERN.test(normalized)) {
+  const normalized = normalizeTelebirrPhone(input.telebirr_phone ?? input.mobile_money);
+  if (!normalized) {
     return {
       ok: false,
-      message: 'Telebirr number must be a valid Ethio Telecom mobile (e.g. 0912345678).',
+      message: 'Telebirr number must be a valid Ethiopian mobile (e.g. 0912345678).',
     };
   }
 

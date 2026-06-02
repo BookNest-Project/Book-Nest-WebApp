@@ -5,6 +5,7 @@ import { userRepository } from '../repositories/userRepository.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { sendWithdrawalEmail } from './emailService.js';
+import { notificationService } from './notificationService.js';
 
 function roundMoney(n) {
   return Math.round(n * 100) / 100;
@@ -100,6 +101,19 @@ export const adminService = {
       } catch (err) {
         logger.warn('Withdrawal status email failed', { error: err.message });
       }
+    }
+
+    try {
+      await notificationService.notifyWithdrawalReviewed({
+        userId: withdrawal.user_id,
+        withdrawalId,
+        status,
+        amount,
+        currency: withdrawal.currency || 'ETB',
+        adminNote: admin_note,
+      });
+    } catch (err) {
+      logger.warn('Withdrawal in-app notification failed', { error: err.message });
     }
 
     return updated;

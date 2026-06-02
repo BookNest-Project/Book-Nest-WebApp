@@ -34,7 +34,7 @@ function getPasswordResetRedirectUrl() {
 }
 
 function getInviteRegistrationRedirectUrl() {
-  return getAuthCallbackUrl('invite');
+  return `${getFrontendUrl()}/register/invite`;
 }
 
 function mapSupabaseAuthError(error) {

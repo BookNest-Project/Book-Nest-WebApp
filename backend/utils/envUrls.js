@@ -196,11 +196,11 @@ export function logResolvedUrls(logger) {
       chapa_return: `${frontend}/checkout/result`,
       auth_verify_redirect: `${frontend}/auth/callback?intent=verify`,
       auth_reset_redirect: `${frontend}/auth/callback?intent=recovery`,
-      auth_invite_redirect: `${frontend}/auth/callback?intent=invite`,
+      auth_invite_redirect: `${frontend}/register/invite`,
       admin_note:
         'FRONTEND_URL = main reader app (emails, checkout). ADMIN_FRONTEND_URL = admin Vercel app (CORS). Admin login uses NEXT_PUBLIC_API_URL on the admin project.',
       supabase_hint:
-        'Add auth_verify_redirect, auth_reset_redirect, auth_invite_redirect, /register/invite, /reset-password, /verify, and /auth/callback under Supabase → Authentication → URL Configuration → Redirect URLs',
+        'Add auth_verify_redirect, auth_reset_redirect, auth_invite_redirect (/register/invite), /reset-password, /verify, and /auth/callback under Supabase → Authentication → URL Configuration → Redirect URLs',
     });
   } catch (err) {
     logger.error('URL configuration error — server will start but payments/email links may fail', {

@@ -260,6 +260,56 @@ export const notificationService = {
     return { notified };
   },
 
+  /**
+   * Notify seller when admin approves or rejects a withdrawal request.
+   */
+  async notifyWithdrawalReviewed({
+    userId,
+    withdrawalId,
+    status,
+    amount,
+    currency = 'ETB',
+    adminNote,
+  }) {
+    const parsedAmount = Math.round((parseFloat(amount) || 0) * 100) / 100;
+    const amountLabel = `${parsedAmount} ${currency}`;
+    const earningsUrl = '/studio/earnings';
+    const approved = status === 'approved';
+
+    const title = approved ? 'Withdrawal approved' : 'Withdrawal rejected';
+    let body = approved
+      ? `Your payout of ${amountLabel} was approved.`
+      : `Your withdrawal of ${amountLabel} was rejected. The amount was returned to your available balance.`;
+
+    const note = typeof adminNote === 'string' ? adminNote.trim() : '';
+    if (note) {
+      body += ` ${note.length > 180 ? `${note.slice(0, 177)}…` : note}`;
+    }
+
+    await notificationRepository.create({
+      userId,
+      type: 'withdrawal',
+      title,
+      body,
+      url: earningsUrl,
+      actorId: null,
+      metadata: {
+        withdrawalId,
+        status,
+        amount: parsedAmount,
+        currency,
+      },
+    });
+
+    await pushToUser(userId, {
+      title,
+      body,
+      url: earningsUrl,
+    });
+
+    return { notified: true };
+  },
+
   async sendStreakReminders() {
     if (!ensureVapid()) return { sent: 0, skipped: true };
 
