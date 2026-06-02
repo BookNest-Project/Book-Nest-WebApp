@@ -1,3 +1,4 @@
+import path from 'path';
 import { supabaseAdmin } from '../config/supabase.js';
 import { logger } from '../utils/logger.js';
 
@@ -66,13 +67,16 @@ export const downloadController = {
         throw new Error(`Supabase returned ${response.status}`);
       }
 
-      const contentType = bookFormat.format_type === 'PDF' ? 'application/pdf' : 'audio/mpeg';
-      const fileExt = bookFormat.format_type === 'PDF' ? 'pdf' : 'mp3';
+      const isPdf = bookFormat.format_type === 'PDF';
+      const fileExt = path.extname(bookFormat.storage_path).slice(1) || (isPdf ? 'pdf' : 'mp3');
+      const contentType = response.headers.get('content-type') || (isPdf ? 'application/pdf' : 'audio/mpeg');
       const fileName = `${bookFormatId}.${fileExt}`;
 
       res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
       res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Type,Content-Disposition,Content-Length');
 
       const contentLength = response.headers.get('content-length');
       if (contentLength) {

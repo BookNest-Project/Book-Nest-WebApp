@@ -386,12 +386,13 @@ async getBookFormatById(req, res, next) {
       }
 
       const isPdf = format.format_type === 'PDF';
-      const contentType = isPdf ? 'application/pdf' : 'audio/mpeg';
-      const fileExt = isPdf ? 'pdf' : 'mp3';
+      const fileExt = path.extname(format.storage_path).slice(1) || (isPdf ? 'pdf' : 'mp3');
+      const contentType = response.headers.get('content-type') || (isPdf ? 'application/pdf' : 'audio/mpeg');
 
       res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Disposition', `inline; filename="preview-${formatId}.${fileExt}"`);
       res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Type,Content-Disposition,Content-Length');
 
       const contentLength = response.headers.get('content-length');
       if (contentLength) {

@@ -33,8 +33,8 @@ export const authenticate = async (req, res, next) => {
       throw new UnauthorizedError('Account is not active');
     }
 
-    // Get public name based on role
-    let publicName = dbUser.email.split('@')[0];
+    // Get public name based on role (avoid showing partial email)
+    let publicName = '';
     
     if (dbUser.role === 'author') {
       const { data: profile } = await supabaseAdmin
@@ -57,6 +57,17 @@ export const authenticate = async (req, res, next) => {
         .eq('user_id', dbUser.id)
         .single();
       if (profile?.display_name) publicName = profile.display_name;
+    }
+
+    if (!publicName) {
+      publicName =
+        dbUser.role === 'author'
+          ? 'Author'
+          : dbUser.role === 'publisher'
+            ? 'Publisher'
+            : dbUser.role === 'admin'
+              ? 'Admin'
+              : 'Reader';
     }
 
     req.user = {
@@ -93,7 +104,7 @@ export const authenticateOptional = async (req, res, next) => {
     if (userError || !dbUser) return next();
     if (dbUser.account_status !== 'active') return next();
 
-    let publicName = dbUser.email.split('@')[0];
+    let publicName = '';
     if (dbUser.role === 'author') {
       const { data: profile } = await supabaseAdmin
         .from('author_profiles')
@@ -115,6 +126,17 @@ export const authenticateOptional = async (req, res, next) => {
         .eq('user_id', dbUser.id)
         .single();
       if (profile?.display_name) publicName = profile.display_name;
+    }
+
+    if (!publicName) {
+      publicName =
+        dbUser.role === 'author'
+          ? 'Author'
+          : dbUser.role === 'publisher'
+            ? 'Publisher'
+            : dbUser.role === 'admin'
+              ? 'Admin'
+              : 'Reader';
     }
 
     req.user = {

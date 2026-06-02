@@ -51,19 +51,49 @@ async function getHiddenMessageIds(userId, chatId) {
 async function resolveUserDisplay(userRow) {
   if (!userRow) return { name: 'User', avatarUrl: null };
 
+  const role = userRow.role || 'reader';
+
+  if (role === 'author') {
+    const { data: author } = await supabaseAdmin
+      .from('author_profiles')
+      .select('pen_name, avatar_url')
+      .eq('user_id', userRow.id)
+      .maybeSingle();
+
+    return {
+      name: author?.pen_name || 'Author',
+      avatarUrl: author?.avatar_url || userRow.avatar_url || null,
+    };
+  }
+
+  if (role === 'publisher') {
+    const { data: publisher } = await supabaseAdmin
+      .from('publisher_profiles')
+      .select('company_name, avatar_url')
+      .eq('user_id', userRow.id)
+      .maybeSingle();
+
+    return {
+      name: publisher?.company_name || 'Publisher',
+      avatarUrl: publisher?.avatar_url || userRow.avatar_url || null,
+    };
+  }
+
+  if (role === 'admin') {
+    return {
+      name: 'Admin',
+      avatarUrl: userRow.avatar_url || null,
+    };
+  }
+
   const { data: readerProfile } = await supabaseAdmin
     .from('reader_profiles')
     .select('display_name, avatar_url')
     .eq('user_id', userRow.id)
     .maybeSingle();
 
-  const name =
-    readerProfile?.display_name ||
-    userRow.email?.split('@')[0] ||
-    'User';
-
   return {
-    name,
+    name: readerProfile?.display_name || 'Reader',
     avatarUrl: readerProfile?.avatar_url || userRow.avatar_url || null,
   };
 }
@@ -96,7 +126,7 @@ const MESSAGE_SELECT = `
   is_read,
   deleted_for_everyone_at,
   created_at,
-  users!sender_id ( id, email, avatar_url )
+  users!sender_id ( id, email, avatar_url, role )
 `;
 
 const MESSAGE_SELECT_WITH_EDIT = `
@@ -108,7 +138,7 @@ const MESSAGE_SELECT_WITH_EDIT = `
   deleted_for_everyone_at,
   edited_at,
   created_at,
-  users!sender_id ( id, email, avatar_url )
+  users!sender_id ( id, email, avatar_url, role )
 `;
 
 const MESSAGE_SELECT_WITH_REPLY = `
@@ -121,7 +151,7 @@ const MESSAGE_SELECT_WITH_REPLY = `
   deleted_for_everyone_at,
   edited_at,
   created_at,
-  users!sender_id ( id, email, avatar_url )
+  users!sender_id ( id, email, avatar_url, role )
 `;
 
 async function fetchChatMessagesRows(chatId, from, to) {
