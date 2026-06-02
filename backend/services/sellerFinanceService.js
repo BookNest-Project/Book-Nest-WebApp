@@ -240,11 +240,16 @@ export const sellerFinanceService = {
     );
 
     const wallet = await this.getWallet(userId);
+    const ledger = await computeLedgerBalances(userId);
+    const paid_out = roundMoney(parseFloat(ledger.paid_out) || 0);
+    const net_remaining = roundMoney(Math.max(0, net_earnings - paid_out));
 
     return {
       gross_sales,
       platform_fees,
       net_earnings,
+      net_remaining,
+      paid_out,
       platform_fee_percent: PLATFORM_FEE_PERCENT,
       available_balance: roundMoney(parseFloat(wallet.available_balance) || 0),
       pending_withdrawal: roundMoney(parseFloat(wallet.pending_balance) || 0),

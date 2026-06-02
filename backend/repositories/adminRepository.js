@@ -148,6 +148,7 @@ export const adminRepository = {
       reportsRes,
       withdrawalsRes,
       transactionsRes,
+      sellerEarningsRes,
     ] = await Promise.all([
       supabaseAdmin.from('users').select('id', { count: 'exact', head: true }),
       supabaseAdmin.from('books').select('id', { count: 'exact', head: true }),
@@ -167,10 +168,15 @@ export const adminRepository = {
         .from('transactions')
         .select('amount')
         .eq('status', 'completed'),
+      supabaseAdmin.from('seller_earnings').select('platform_fee'),
     ]);
 
     const totalRevenue = (transactionsRes.data || []).reduce(
       (sum, row) => sum + parseFloat(row.amount || 0),
+      0
+    );
+    const platformIncome = (sellerEarningsRes.data || []).reduce(
+      (sum, row) => sum + parseFloat(row.platform_fee || 0),
       0
     );
 
@@ -181,6 +187,7 @@ export const adminRepository = {
       pending_reports: reportsRes.count ?? 0,
       pending_withdrawals: withdrawalsRes.count ?? 0,
       total_revenue: Math.round(totalRevenue * 100) / 100,
+      platform_income: Math.round(platformIncome * 100) / 100,
     };
   },
 
@@ -721,9 +728,14 @@ export const adminRepository = {
   },
 
   async updateWithdrawal(id, updates) {
+    const payload = { ...updates };
+    if (updates.status === 'approved' || updates.status === 'rejected') {
+      payload.processed_at = new Date().toISOString();
+    }
+
     const { data, error } = await supabaseAdmin
       .from('withdrawal_requests')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(payload)
       .eq('id', id)
       .select('*')
       .single();

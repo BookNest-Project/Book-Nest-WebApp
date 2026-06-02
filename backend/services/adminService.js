@@ -87,6 +87,7 @@ export const adminService = {
 
     const updated = await adminRepository.updateWithdrawal(withdrawalId, {
       status,
+      ...(admin_note?.trim() ? { admin_note: admin_note.trim() } : {}),
     });
 
     const user = await userRepository.findById(withdrawal.user_id);
