@@ -65,6 +65,37 @@ export const authController = {
     },
   ],
 
+  adminLogin: [
+    validateZod(loginSchema),
+    async (req, res, next) => {
+      try {
+        const { email, password, remember_me: rememberMe } = req.body;
+        const result = await authService.login(email, password, rememberMe, { adminOnly: true });
+
+        const maxAge = Math.max(0, result.expiresAt - Date.now());
+
+        res.cookie('token', result.token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+          path: '/',
+          maxAge,
+        });
+
+        res.status(200).json({
+          success: true,
+          message: 'Admin login successful',
+          data: {
+            ...result.session,
+            rememberMe: result.rememberMe,
+          },
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  ],
+
   logout: async (req, res, next) => {
     try {
       const token = req.cookies?.token;

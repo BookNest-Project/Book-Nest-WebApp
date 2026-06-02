@@ -149,7 +149,7 @@ export const authService = {
     };
   },
 
-  async login(email, password, rememberMe = false) {
+  async login(email, password, rememberMe = false, { adminOnly = false } = {}) {
     const normalizedEmail = email.trim().toLowerCase();
     const { user: authUser, session, error } = await authRepository.verifyCredentials(
       normalizedEmail,
@@ -172,7 +172,11 @@ export const authService = {
       throw new UnauthorizedError('User account not found');
     }
 
-    if (dbUser.role === 'admin') {
+    if (adminOnly && dbUser.role !== 'admin') {
+      throw new ForbiddenError('This login is for admin accounts only.');
+    }
+
+    if (!adminOnly && dbUser.role === 'admin') {
       throw new ForbiddenError('Unable to sign in with this account.');
     }
 
@@ -202,6 +206,9 @@ export const authService = {
         break;
       case 'publisher':
         profile = await userRepository.findPublisherProfile(authUser.id);
+        break;
+      case 'admin':
+        profile = await userRepository.findAdminProfile(authUser.id);
         break;
       default:
         break;
