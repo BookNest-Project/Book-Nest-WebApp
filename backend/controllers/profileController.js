@@ -2,6 +2,7 @@ import { profileRepository } from '../repositories/profileRepository.js';
 import { fileUploadService } from '../services/fileUploadService.js';
 import { formatSuccess } from '../utils/responseFormatter.js';
 import { logger } from '../utils/logger.js';
+import { ValidationError } from '../utils/errors.js';
 
 export const profileController = {
   async getProfile(req, res, next) {
@@ -30,7 +31,10 @@ export const profileController = {
         full_name,
       };
 
-      await profileRepository.updateProfile(userId, updates);
+      const result = await profileRepository.updateProfile(userId, updates);
+      if (result?.error) {
+        throw new ValidationError(result.error);
+      }
 
       res.status(200).json(formatSuccess(null, 'Profile updated successfully'));
     } catch (error) {
@@ -59,7 +63,10 @@ export const profileController = {
           /* ignore old avatar cleanup */
         }
       }
-      await profileRepository.updateAvatar(userId, url);
+      const result = await profileRepository.updateAvatar(userId, url);
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       res.status(200).json(formatSuccess({ avatar_url: url }, 'Avatar updated'));
     } catch (error) {
@@ -72,7 +79,7 @@ export const profileController = {
       const userId = req.user.id;
       const { is_public, show_email, show_reading_stats, email_notifications, push_notifications, marketing_emails } = req.body;
 
-      await profileRepository.updateSettings(userId, {
+      const result = await profileRepository.updateSettings(userId, {
         is_public,
         show_email,
         show_reading_stats,
@@ -80,6 +87,9 @@ export const profileController = {
         push_notifications,
         marketing_emails,
       });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
 
       res.status(200).json(formatSuccess(null, 'Settings updated'));
     } catch (error) {

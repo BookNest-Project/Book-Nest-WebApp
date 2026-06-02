@@ -265,46 +265,9 @@ create trigger on_auth_user_created_or_updated
 after insert or update on auth.users
 for each row execute function public.handle_auth_user_sync();
 
-create or replace function public.ensure_profile_role_match()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  current_role public.user_role;
-begin
-  select role into current_role
-  from public.users
-  where id = new.user_id;
-
-  if tg_table_name = 'author_profiles' and current_role not in ('author', 'admin') then
-    raise exception 'User % must have author or admin role before creating author profile', new.user_id;
-  end if;
-
-  if tg_table_name = 'publisher_profiles' and current_role not in ('publisher', 'admin') then
-    raise exception 'User % must have publisher or admin role before creating publisher profile', new.user_id;
-  end if;
-
-  if tg_table_name = 'admin_profiles' and current_role <> 'admin' then
-    raise exception 'User % must have admin role before creating admin profile', new.user_id;
-  end if;
-
-  return new;
-end;
-$$;
-
-create trigger author_profiles_role_guard
-before insert or update on public.author_profiles
-for each row execute function public.ensure_profile_role_match();
-
-create trigger publisher_profiles_role_guard
-before insert or update on public.publisher_profiles
-for each row execute function public.ensure_profile_role_match();
-
-create trigger admin_profiles_role_guard
-before insert or update on public.admin_profiles
-for each row execute function public.ensure_profile_role_match();
+-- Profile role guards (ensure_profile_role_match + *_role_guard triggers) removed.
+-- Run db/disable-profile-role-guards.sql on existing Supabase projects.
+-- Role checks live in profileRepository.updateProfile (application layer).
 
 create trigger users_set_updated_at
 before update on public.users

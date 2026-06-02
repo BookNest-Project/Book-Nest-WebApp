@@ -197,6 +197,25 @@ export const profileRepository = {
         .eq('id', userId)
         .single();
 
+      // Guard: prevent profile table inserts when role doesn't match.
+      if (updates?.pen_name && user?.role !== 'author' && user?.role !== 'admin') {
+        return {
+          error:
+            'Your account is not an author. Ask an admin to invite/upgrade your account to author before setting a pen name.',
+        };
+      }
+      if (updates?.company_name && user?.role !== 'publisher' && user?.role !== 'admin') {
+        return {
+          error:
+            'Your account is not a publisher. Ask an admin to invite/upgrade your account to publisher before setting a company name.',
+        };
+      }
+      if (updates?.display_name && user?.role !== 'reader' && user?.role !== 'admin') {
+        return {
+          error: 'Only reader accounts can set a display name.',
+        };
+      }
+
       const userUpdates = {
         bio: updates.bio,
         location: updates.location,
@@ -316,7 +335,6 @@ export const profileRepository = {
         .upsert({
           user_id: userId,
           ...settings,
-          updated_at: new Date().toISOString(),
         });
 
       if (error) throw error;
